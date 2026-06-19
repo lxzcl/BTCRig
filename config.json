@@ -1,0 +1,19 @@
+{
+  "autosave": false,
+  "cpu": {
+    "enabled": true,
+    "threads": 0
+  },
+  "pools": [
+    {
+      "url": "stratum+tls://public-pool.io:4333",
+      "user": "bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3",
+      "pass": "x",
+      "diff": 0.001
+    }
+  ],
+  "retries": -1,
+  "retry-pause": 2,
+  "print-time": 10,
+  "runtime": 0
+}

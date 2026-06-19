@@ -1,0 +1,11 @@
+build/
+dist/
+*.o
+*.a
+*.so
+*.exe
+*.dll
+*.zip
+*.log
+cert.pem
+cert_key.pem

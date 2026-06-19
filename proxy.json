@@ -1,0 +1,11 @@
+{
+  "listen": {
+    "mode": "auto",
+    "host": "0.0.0.0",
+    "port": 4333
+  },
+  "upstream": {
+    "url": "stratum+tls://public-pool.io:4333",
+    "verify": true
+  }
+}

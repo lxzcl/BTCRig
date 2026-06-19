@@ -1,0 +1,60 @@
+#ifndef BTC_MINER_MINER_H
+#define BTC_MINER_MINER_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct miner miner_t;
+
+typedef struct {
+    uint64_t seq;
+    uint32_t nonce;
+    double difficulty;
+    uint8_t hash[32];
+    char job_id[128];
+    char extranonce2[32];
+    char ntime[16];
+} miner_share_t;
+
+typedef struct {
+    uint64_t seq;
+    char job_id[128];
+    char extranonce2[32];
+    char ntime[16];
+    uint8_t header[80];
+    uint8_t target[32];
+} miner_job_t;
+
+int miner_build_job(miner_job_t *out,
+                    const char *job_id,
+                    const char *prevhash,
+                    const char *coinb1,
+                    const char *coinb2,
+                    const char **merkle,
+                    int merkle_count,
+                    const char *version,
+                    const char *nbits,
+                    const char *ntime,
+                    const char *extranonce1,
+                    const char *extranonce2,
+                    double difficulty);
+
+miner_t *miner_create(int thread_count);
+void miner_destroy(miner_t *miner);
+int miner_start(miner_t *miner);
+void miner_stop(miner_t *miner);
+void miner_set_job(miner_t *miner, const miner_job_t *job);
+void miner_set_paused(miner_t *miner, int paused);
+int miner_is_paused(miner_t *miner);
+int miner_take_nonce_exhausted(miner_t *miner);
+int miner_pop_share(miner_t *miner, miner_share_t *share);
+uint64_t miner_hashes(miner_t *miner);
+int miner_thread_count(miner_t *miner);
+int miner_snapshot_thread_hashes(miner_t *miner, uint64_t *out, int max_count);
+
+void miner_format_extranonce2(char *out, size_t out_size, int extranonce2_size, uint64_t value);
+void miner_target_from_difficulty(double difficulty, uint8_t target[32]);
+int miner_hash_meets_target(const uint8_t hash[32], const uint8_t target[32]);
+double miner_hash_difficulty(const uint8_t hash[32]);
+
+#endif
