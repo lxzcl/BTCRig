@@ -17,7 +17,7 @@ pool: stratum+tls://public-pool.io:4333
 user: bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
 pass: x
 suggest difficulty: 0.001
-agent: BTCRig/1.0
+agent: BTCRig/v0.1.0
 ```
 
 如果要使用自己的钱包，请运行时加 `-u`，或者修改 `config.json`。
@@ -195,6 +195,72 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 
 把整个 `dist/` 目录复制到其他 Windows 机器即可。
 
+## GitHub Actions Windows 构建
+
+仓库包含 Windows UCRT64 workflow：
+
+```text
+.github/workflows/main.yml
+```
+
+它有两种触发方式：
+
+- 在 GitHub Actions 页面手动运行 `workflow_dispatch`。
+- `master` 或 `dev` 上涉及源码、CMake、配置、版本号或 workflow 文件的代码变动推送。
+
+workflow 会构建三个程序，并上传 zip 产物：
+
+```text
+BTCRig-v0.1.0-windows-ucrt64.zip
+```
+
+zip 内包含：
+
+```text
+btc_stratum.exe
+btc_proxy.exe
+btc_bench.exe
+config.json
+proxy.json
+必要 DLL 文件
+README 文件
+LICENSE
+VERSION
+```
+
+## 版本控制
+
+BTCRig 使用根目录 `VERSION` 文件作为唯一版本来源。当前开发版本：
+
+```text
+0.1.0
+```
+
+CMake 会读取这个文件并生成运行时版本宏。矿工上报的 Stratum user agent 是：
+
+```text
+BTCRig/v0.1.0
+```
+
+常用命令：
+
+```bash
+./build/btc_stratum --version
+./build/btc_proxy --version
+./build/btc_bench --version
+```
+
+建议发布流程：
+
+```bash
+git switch dev
+# 开发和测试
+git switch master
+git merge --ff-only dev
+git tag -a v0.1.0 -m "BTCRig v0.1.0"
+git push origin master v0.1.0
+```
+
 ## 常用参数
 
 ```text
@@ -301,3 +367,26 @@ BTC_MINER_SHA_BACKEND=portable ./build/btc_bench -t "$(nproc)" -s 10
   "runtime": 0
 }
 ```
+
+## 已完成工作
+
+- CPU SHA256d Stratum 矿工，支持 TCP 和 TLS 矿池。
+- 配置文件支持和默认配置。
+- 无限重连，并限制最大重试等待时间。
+- 运行时交互按键：算力、暂停、恢复、提交统计、连接信息。
+- Benchmark 工具，支持选择 SHA 后端。
+- 透明 Stratum 代理，支持自动识别 TCP/TLS 客户端。
+- 代理自动生成自签名证书。
+- Windows、Ubuntu/Debian、Termux 构建文档。
+- 英文默认文档和中文翻译文档。
+- 从 `v0.1.0` 开始的统一 `VERSION` 版本控制。
+- GitHub Actions Windows UCRT64 构建和 zip 产物打包。
+
+## 后续计划
+
+- Windows x86 SHA-NI / AVX2 多路并行 SHA256d 后端。
+- Linux 和 Termux 的 GitHub Actions 构建。
+- 使用 Git tag 的版本化 GitHub Release。
+- 增加 benchmark 模式，方便比较 OpenSSL、普通 C、ARM SHA2 和未来 x86 后端。
+- 更完整的 Windows 和 Linux 发布包。
+- 增强重复 share、重连、矿池难度变化等挖矿稳定性诊断。

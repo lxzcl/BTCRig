@@ -2,6 +2,7 @@
 
 #include "stratum.h"
 
+#include "btcrig_version.h"
 #include "console.h"
 #include "miner.h"
 
@@ -464,7 +465,7 @@ static int send_request(stratum_conn_t *conn, int id, const char *method, json_t
 
 static int send_subscribe(stratum_conn_t *conn) {
     json_t *params = json_array();
-    json_array_append_new(params, json_string("BTCRig/1.0"));
+    json_array_append_new(params, json_string(BTCRIG_USER_AGENT));
     return send_request(conn, 1, "mining.subscribe", params);
 }
 

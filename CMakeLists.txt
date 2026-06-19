@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(BTCRig C)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" BTCRIG_VERSION_RAW)
+string(STRIP "${BTCRIG_VERSION_RAW}" BTCRIG_VERSION)
+string(REGEX REPLACE "^v" "" BTCRIG_VERSION "${BTCRIG_VERSION}")
+set(BTCRIG_VERSION_TAG "v${BTCRIG_VERSION}")
+
+project(BTCRig VERSION "${BTCRIG_VERSION}" LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -16,6 +21,12 @@ pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
 include(CheckCCompilerFlag)
 include(CheckCSourceCompiles)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/btcrig_version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/btcrig_version.h"
+    @ONLY
+)
 
 set(BTC_MINER_SHA256D_SOURCES src/sha256d.c)
 set(BTC_MINER_ARM_SHA2_FLAGS "")
@@ -64,6 +75,10 @@ target_compile_options(btc_bench PRIVATE
     -Wpedantic
 )
 
+target_include_directories(btc_bench PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
+)
+
 target_compile_definitions(btc_bench PRIVATE
     OPENSSL_SUPPRESS_DEPRECATED
 )
@@ -95,6 +110,10 @@ target_compile_options(btc_stratum PRIVATE
     -Wall
     -Wextra
     -Wpedantic
+)
+
+target_include_directories(btc_stratum PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
 
 if(BTC_MINER_NATIVE AND HAS_MARCH_NATIVE)
@@ -129,6 +148,10 @@ target_compile_options(btc_proxy PRIVATE
     -Wall
     -Wextra
     -Wpedantic
+)
+
+target_include_directories(btc_proxy PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
 
 target_link_libraries(btc_proxy PRIVATE

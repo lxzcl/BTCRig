@@ -4,6 +4,7 @@
 #include "cpu_info.h"
 #include "sha256d.h"
 #include "stratum.h"
+#include "btcrig_version.h"
 
 #include <jansson.h>
 #include <stdio.h>
@@ -266,10 +267,13 @@ static void usage(const char *argv0) {
     printf("Usage:\n");
     printf("  %s --self-test\n", argv0);
     printf("  %s --cpu-info\n", argv0);
+    printf("  %s --version\n", argv0);
     printf("  %s [-c config.json] [-o stratum+tls://host:port] [-u wallet.worker] [-p password] [-d difficulty]\n", argv0);
     printf("     [-t threads] [-r retries] [--runtime seconds] [--stats seconds]\n");
     printf("     [--reconnect-delay seconds] [--no-mine]\n");
     printf("\nDefaults:\n");
+    printf("  version: %s\n", BTCRIG_VERSION_TAG);
+    printf("  agent: %s\n", BTCRIG_USER_AGENT);
     printf("  pool: %s\n", DEFAULT_POOL_URL);
     printf("  user: %s\n", DEFAULT_USER);
     printf("  pass: %s\n", DEFAULT_PASSWORD);
@@ -310,6 +314,10 @@ static int handle_early_command(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--self-test") == 0) {
             return run_self_test();
+        }
+        if (strcmp(argv[i], "--version") == 0) {
+            printf("%s %s\n", BTCRIG_NAME, BTCRIG_VERSION_TAG);
+            return 0;
         }
         if (strcmp(argv[i], "--cpu-info") == 0) {
             cpu_info_t info;
@@ -356,6 +364,9 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--self-test") == 0) {
             return run_self_test();
+        } else if (strcmp(argv[i], "--version") == 0) {
+            printf("%s %s\n", BTCRIG_NAME, BTCRIG_VERSION_TAG);
+            return 0;
         } else if (strcmp(argv[i], "--cpu-info") == 0) {
             cpu_info_t info;
             cpu_info_detect(&info);

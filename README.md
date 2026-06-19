@@ -17,7 +17,7 @@ pool: stratum+tls://public-pool.io:4333
 user: bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
 pass: x
 suggest difficulty: 0.001
-agent: BTCRig/1.0
+agent: BTCRig/v0.1.0
 ```
 
 Use `-u` or edit `config.json` to mine with your own wallet.
@@ -197,6 +197,68 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 
 Copy the whole `dist/` directory to another Windows machine.
 
+## GitHub Actions Windows Build
+
+The repository includes a Windows UCRT64 workflow at `.github/workflows/main.yml`.
+
+It runs in two cases:
+
+- Manual run through GitHub Actions `workflow_dispatch`.
+- Code changes pushed to `master` or `dev` that touch source, CMake, config, version, or the workflow file.
+
+The workflow builds all three programs and uploads a zip artifact:
+
+```text
+BTCRig-v0.1.0-windows-ucrt64.zip
+```
+
+The zip contains:
+
+```text
+btc_stratum.exe
+btc_proxy.exe
+btc_bench.exe
+config.json
+proxy.json
+required DLL files
+README files
+LICENSE
+VERSION
+```
+
+## Versioning
+
+BTCRig uses a single `VERSION` file as the project version source. The current development version is:
+
+```text
+0.1.0
+```
+
+CMake reads this file and generates the runtime version macros. The miner reports the Stratum user agent as:
+
+```text
+BTCRig/v0.1.0
+```
+
+Useful commands:
+
+```bash
+./build/btc_stratum --version
+./build/btc_proxy --version
+./build/btc_bench --version
+```
+
+Recommended release flow:
+
+```bash
+git switch dev
+# develop and test
+git switch master
+git merge --ff-only dev
+git tag -a v0.1.0 -m "BTCRig v0.1.0"
+git push origin master v0.1.0
+```
+
 ## Common Options
 
 ```text
@@ -305,3 +367,26 @@ Minimal example:
   "runtime": 0
 }
 ```
+
+## Completed Work
+
+- CPU SHA256d Stratum miner with TCP and TLS pool support.
+- Config file support with sensible defaults.
+- Infinite reconnect with bounded retry backoff.
+- Interactive runtime keys for hashrate, pause, resume, results, and connection status.
+- Benchmark tool with selectable SHA backend.
+- Transparent Stratum proxy with auto TCP/TLS client detection.
+- Automatic self-signed proxy certificate generation.
+- Windows, Ubuntu/Debian, and Termux build documentation.
+- English default docs with Chinese translations.
+- Unified `VERSION`-based project versioning starting at `v0.1.0`.
+- GitHub Actions Windows UCRT64 build and zip artifact packaging.
+
+## Roadmap
+
+- Windows x86 SHA-NI / AVX2 multi-lane parallel SHA256d backend.
+- Linux and Termux GitHub Actions builds.
+- Versioned GitHub Releases with tagged artifacts.
+- More benchmark modes for comparing OpenSSL, portable C, ARM SHA2, and future x86 backends.
+- Cleaner release packaging for Windows and Linux.
+- Additional mining stability diagnostics for duplicate shares, reconnects, and pool difficulty changes.

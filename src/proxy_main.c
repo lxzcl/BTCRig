@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "btcrig_version.h"
+
 #include <errno.h>
 #include <jansson.h>
 #include <openssl/err.h>
@@ -757,6 +759,7 @@ static void usage(const char *argv0) {
     printf("Usage:\n");
     printf("  %s\n", argv0);
     printf("  %s --config proxy.json\n", argv0);
+    printf("  %s --version\n", argv0);
     printf("  %s --listen-auto host:port --upstream stratum+tls://public-pool.io:4333\n", argv0);
     printf("  %s --listen-tcp host:port --upstream stratum+tls://public-pool.io:4333\n", argv0);
     printf("  %s --listen-tls host:port --cert fullchain.pem --key privkey.pem --upstream stratum+tls://public-pool.io:4333\n", argv0);
@@ -878,6 +881,15 @@ static const char *find_config_arg(int argc, char **argv) {
 static int has_help_arg(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int has_version_arg(int argc, char **argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--version") == 0) {
             return 1;
         }
     }
@@ -1028,6 +1040,10 @@ int main(int argc, char **argv) {
 
     if (has_help_arg(argc, argv)) {
         usage(argv[0]);
+        return 0;
+    }
+    if (has_version_arg(argc, argv)) {
+        printf("%s proxy %s\n", BTCRIG_NAME, BTCRIG_VERSION_TAG);
         return 0;
     }
 

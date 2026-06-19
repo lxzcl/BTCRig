@@ -1,1 +1,101 @@
-build
+name: Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - dev
+    paths:
+      - ".github/workflows/main.yml"
+      - "CMakeLists.txt"
+      - "VERSION"
+      - "config.json"
+      - "proxy.json"
+      - "src/**"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-ucrt64:
+    name: Windows UCRT64
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            make
+            zip
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-jansson
+            mingw-w64-ucrt-x86_64-pkgconf
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+
+      - name: Build
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Smoke test
+        run: |
+          ./build/btc_stratum.exe --version
+          ./build/btc_proxy.exe --version
+          ./build/btc_bench.exe --version
+          ./build/btc_stratum.exe --self-test
+          ./build/btc_stratum.exe --cpu-info
+          ./build/btc_bench.exe -t 1 -s 1
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          dist="BTCRig-v${{ steps.version.outputs.version }}-windows-ucrt64"
+          rm -rf "$dist" "$dist.zip"
+          mkdir -p "$dist"
+
+          cp build/btc_stratum.exe "$dist/"
+          cp build/btc_proxy.exe "$dist/"
+          cp build/btc_bench.exe "$dist/"
+          cp config.json proxy.json "$dist/"
+          cp README.md README.zh-CN.md PROXY.md PROXY.zh-CN.md LICENSE VERSION "$dist/"
+
+          ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
+            | awk '{for (i=1; i<=NF; i++) if ($i ~ /^\/ucrt64\/bin\//) print $i}' \
+            | sort -u \
+            | while IFS= read -r dll; do
+                if [ -n "$dll" ]; then
+                  cp -u "$dll" "$dist/"
+                fi
+              done
+
+          zip -r "$dist.zip" "$dist"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BTCRig-v${{ steps.version.outputs.version }}-windows-ucrt64
+          path: BTCRig-v${{ steps.version.outputs.version }}-windows-ucrt64.zip
+          if-no-files-found: error

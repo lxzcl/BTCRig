@@ -3,6 +3,7 @@
 #include "console.h"
 #include "cpu_info.h"
 #include "sha256d.h"
+#include "btcrig_version.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -164,7 +165,7 @@ static int parse_positive_int(const char *text, int fallback) {
 
 static void usage(const char *argv0) {
     fprintf(stderr,
-            "Usage: %s [-t threads] [-s seconds] [--backend openssl|fast-c|arm-sha2] [--all] [--cpu-info]\n",
+            "Usage: %s [-t threads] [-s seconds] [--backend openssl|fast-c|arm-sha2] [--all] [--cpu-info] [--version]\n",
             argv0);
 }
 
@@ -257,6 +258,9 @@ int main(int argc, char **argv) {
             cpu_info_t info;
             cpu_info_detect(&info);
             cpu_info_print(&info);
+            return 0;
+        } else if (strcmp(argv[i], "--version") == 0) {
+            printf("%s bench %s\n", BTCRIG_NAME, BTCRIG_VERSION_TAG);
             return 0;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             usage(argv[0]);
