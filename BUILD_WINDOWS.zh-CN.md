@@ -1,10 +1,10 @@
-# Windows Build
+# Windows 构建
 
-[简体中文](BUILD_WINDOWS.zh-CN.md)
+[English](BUILD_WINDOWS.md)
 
-The full Windows / MSYS2 UCRT64 build and packaging instructions are in [README.md](README.md).
+完整 Windows / MSYS2 UCRT64 构建和打包说明见 [README.zh-CN.md](README.zh-CN.md)。
 
-Quick build:
+快速构建：
 
 ```bash
 pacman -S --needed \
@@ -20,7 +20,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
 cmake --build build -j$(nproc)
 ```
 
-Default pool:
+默认矿池：
 
 ```text
 stratum+tls://public-pool.io:4333

@@ -1,10 +1,10 @@
-# Linux / Termux Build
+# Linux / Termux 构建
 
-[简体中文](BUILD_LINUX.zh-CN.md)
+[English](BUILD_LINUX.md)
 
-The full Ubuntu, Debian, and Termux build instructions are in [README.md](README.md).
+完整 Ubuntu、Debian 和 Termux 构建说明见 [README.zh-CN.md](README.zh-CN.md)。
 
-Ubuntu / Debian quick build:
+Ubuntu / Debian 快速构建：
 
 ```bash
 sudo apt update
@@ -15,7 +15,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
 cmake --build build -j"$(nproc)"
 ```
 
-Termux quick build:
+Termux 快速构建：
 
 ```bash
 pkg update
@@ -25,7 +25,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
 cmake --build build -j"$(nproc)"
 ```
 
-Default pool:
+默认矿池：
 
 ```text
 stratum+tls://public-pool.io:4333

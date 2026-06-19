@@ -1,16 +1,16 @@
 # BTCRig Proxy
 
-[简体中文](PROXY.zh-CN.md)
+[English](PROXY.md)
 
-`btc_proxy` is a transparent Stratum forwarding proxy. Each client connection gets its own upstream pool connection.
+`btc_proxy` 是透明 Stratum 转发代理。每个客户端连接都会建立一个独立的上游矿池连接。
 
-Run:
+运行：
 
 ```bash
 ./build/btc_proxy
 ```
 
-Default configuration:
+默认配置：
 
 ```text
 listen: 0.0.0.0:4333
@@ -19,38 +19,38 @@ upstream: stratum+tls://public-pool.io:4333
 upstream verify: true
 ```
 
-The same listener can auto-detect plain TCP and TLS clients:
+同一个监听端口支持自动识别客户端 TCP 和 TLS：
 
 ```bash
 ./build/btc_stratum -o stratum+tcp://proxy-host:4333
 ./build/btc_stratum -o stratum+tls://proxy-host:4333
 ```
 
-## Automatic Certificate
+## 自动证书
 
-If no certificate is configured, the proxy generates a self-signed certificate in the current working directory:
+代理没有配置证书时，会在当前工作目录自动生成自签名证书：
 
 ```text
 cert.pem
 cert_key.pem
 ```
 
-You can also set a persistent data directory:
+也可以指定持久目录：
 
 ```bash
 ./build/btc_proxy --data-dir /var/lib/btc-proxy
 ```
 
-Or use an environment variable:
+或使用环境变量：
 
 ```bash
 export BTC_PROXY_DATA_DIR=/var/lib/btc-proxy
 ./build/btc_proxy
 ```
 
-## Trusted Certificate
+## 使用可信证书
 
-For public deployments, use a certificate signed by a trusted CA:
+公开部署时可以使用 CA 签发的证书：
 
 ```bash
 ./build/btc_proxy \
@@ -60,7 +60,7 @@ For public deployments, use a certificate signed by a trusted CA:
   --upstream stratum+tls://public-pool.io:4333
 ```
 
-## proxy.json Example
+## proxy.json 示例
 
 ```json
 {

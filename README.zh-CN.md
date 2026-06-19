@@ -1,16 +1,16 @@
 # BTCRig
 
-[简体中文](README.zh-CN.md)
+[English](README.md)
 
-BTCRig is an experimental Bitcoin SHA256d CPU miner and Stratum proxy for learning, testing, and low-power mining experiments.
+BTCRig 是一个用于学习、测试和实验的 BTC SHA256d CPU 矿工与 Stratum 代理项目。
 
-The project builds three programs:
+项目包含三个程序：
 
-- `btc_stratum`: connects to a Stratum pool and mines with the CPU.
-- `btc_bench`: benchmarks local SHA256d performance.
-- `btc_proxy`: forwards Stratum traffic between miners and an upstream pool, with TCP and TLS support.
+- `btc_stratum`：连接 Stratum 矿池，并使用 CPU 计算 SHA256d。
+- `btc_bench`：测试本机 SHA256d 算力。
+- `btc_proxy`：在矿工和上游矿池之间转发 Stratum 流量，支持 TCP 和 TLS。
 
-Default configuration:
+默认配置：
 
 ```text
 pool: stratum+tls://public-pool.io:4333
@@ -20,9 +20,9 @@ suggest difficulty: 0.001
 agent: BTCRig/1.0
 ```
 
-Use `-u` or edit `config.json` to mine with your own wallet.
+如果要使用自己的钱包，请运行时加 `-u`，或者修改 `config.json`。
 
-## Ubuntu / Debian Auto Install
+## Ubuntu / Debian 自动安装
 
 ```bash
 wget -O ubuntu.sh https://raw.githubusercontent.com/lxzcl/BTCRig/main/ubuntu.sh
@@ -30,22 +30,20 @@ chmod +x ubuntu.sh
 ./ubuntu.sh
 ```
 
-The script installs dependencies, downloads the source, builds BTCRig, and starts `btc_stratum`.
-
-Default install directory:
+脚本会安装依赖、下载源码、构建并运行 `btc_stratum`。默认安装目录：
 
 ```text
 ~/BTCRig
 ```
 
-Run again later:
+再次运行：
 
 ```bash
 cd ~/BTCRig
 ./build/btc_stratum
 ```
 
-## Ubuntu / Debian Manual Build
+## Ubuntu / Debian 手动构建
 
 ```bash
 sudo apt update
@@ -58,7 +56,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
 cmake --build build -j"$(nproc)"
 ```
 
-Basic checks:
+测试：
 
 ```bash
 ./build/btc_stratum --self-test
@@ -66,20 +64,20 @@ Basic checks:
 ./build/btc_bench -t "$(nproc)" -s 10
 ```
 
-Run:
+运行：
 
 ```bash
 ./build/btc_stratum
 ```
 
-Override pool or wallet:
+指定矿池或钱包：
 
 ```bash
 ./build/btc_stratum -o stratum+tls://public-pool.io:4333
 ./build/btc_stratum -u bc1q_example_wallet.worker
 ```
 
-## Termux Auto Install
+## Termux 自动安装
 
 ```bash
 pkg update
@@ -89,9 +87,9 @@ chmod +x termux.sh
 ./termux.sh
 ```
 
-If Termux `cmake` cannot start because of a `jsoncpp` library mismatch, the script tries to repair it first. If that still fails, it falls back to a direct `clang` build.
+如果 Termux 的 `cmake` 因 `jsoncpp` 动态库不匹配而无法启动，脚本会先尝试修复；如果仍然失败，会自动改用 `clang` 直接构建。
 
-Manual repair:
+手动修复命令：
 
 ```bash
 pkg update
@@ -99,7 +97,7 @@ pkg upgrade -y
 pkg reinstall -y cmake jsoncpp
 ```
 
-## Termux Manual Build
+## Termux 手动构建
 
 ```bash
 pkg update
@@ -112,23 +110,23 @@ cmake --build build -j"$(nproc)"
 ./build/btc_stratum
 ```
 
-## Windows / MSYS2 UCRT64 Build
+## Windows / MSYS2 UCRT64 构建
 
-Open the MSYS2 UCRT64 terminal. Do not use the plain MSYS, MINGW64, or Windows PowerShell environment for this build.
+请打开 MSYS2 UCRT64 终端，不要使用普通 MSYS、MINGW64 或 Windows PowerShell。
 
-Check the environment:
+确认环境：
 
 ```bash
 echo $MSYSTEM
 ```
 
-Expected output:
+应输出：
 
 ```text
 UCRT64
 ```
 
-Install dependencies:
+安装依赖：
 
 ```bash
 pacman -Syu
@@ -142,7 +140,7 @@ pacman -S --needed \
   git make
 ```
 
-Build:
+构建：
 
 ```bash
 git clone https://github.com/lxzcl/BTCRig.git
@@ -151,7 +149,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
 cmake --build build -j$(nproc)
 ```
 
-Generated files:
+生成文件：
 
 ```text
 build/btc_stratum.exe
@@ -159,7 +157,7 @@ build/btc_proxy.exe
 build/btc_bench.exe
 ```
 
-Test:
+测试：
 
 ```bash
 ./build/btc_stratum.exe --self-test
@@ -167,9 +165,9 @@ Test:
 ./build/btc_bench.exe -t 1 -s 1
 ```
 
-## Windows DLL Packaging
+## Windows 打包 DLL
 
-Package only the miner:
+只打包矿工主程序：
 
 ```bash
 rm -rf dist
@@ -182,7 +180,7 @@ ldd build/btc_stratum.exe \
   | xargs -r -I{} cp -u "{}" dist/
 ```
 
-Package all executables:
+打包全部程序：
 
 ```bash
 rm -rf dist
@@ -195,46 +193,46 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
   | xargs -r -I{} cp -u "{}" dist/
 ```
 
-Copy the whole `dist/` directory to another Windows machine.
+把整个 `dist/` 目录复制到其他 Windows 机器即可。
 
-## Common Options
-
-```text
--o, --url URL              pool URL
--u, --user USER            wallet or username
--p, --pass PASS            password
--d, --suggest-diff N       suggested initial difficulty
--t, --threads N            CPU thread count, 0 means auto
---stats N                  print stats every N seconds
---runtime N                run for N seconds, 0 means unlimited
---no-mine                  test the connection without mining
---cpu-info                 print CPU information
---self-test                run Stratum parser self-test
-```
-
-Network reconnects are continuous. The reconnect delay starts at `retry-pause` and backs off up to 60 seconds.
-
-## Interactive Keys
-
-During mining:
+## 常用参数
 
 ```text
-h  per-thread hashrate
-p  pause mining
-r  resume mining
-s  submit statistics
-c  connection information
+-o, --url URL              指定矿池地址
+-u, --user USER            指定钱包或用户名
+-p, --pass PASS            指定密码
+-d, --suggest-diff N       建议初始难度
+-t, --threads N            指定 CPU 线程数，0 表示自动
+--stats N                  每 N 秒输出统计
+--runtime N                运行 N 秒，0 表示不限时
+--no-mine                  只测试连接，不启动挖矿
+--cpu-info                 显示 CPU 信息
+--self-test                运行 Stratum 解析自测
 ```
 
-## Stratum Proxy
+网络断开后程序会持续重连，等待时间从 `retry-pause` 开始递增，最多 60 秒一次。
 
-Run:
+## 交互按键
+
+运行期间可以按：
+
+```text
+h  显示各线程算力
+p  暂停挖矿
+r  恢复挖矿
+s  显示提交统计
+c  显示连接信息
+```
+
+## Stratum 代理
+
+默认运行：
 
 ```bash
 ./build/btc_proxy
 ```
 
-Default listener:
+默认监听：
 
 ```text
 listen: 0.0.0.0:4333
@@ -242,36 +240,36 @@ mode: auto
 upstream: stratum+tls://public-pool.io:4333
 ```
 
-`auto` mode detects plain TCP and TLS clients on the same port. Each client gets an independent upstream pool connection.
+`auto` 模式会在同一个端口上自动识别客户端是 TCP 还是 TLS。每个客户端连接都会建立一个独立的上游矿池连接。
 
-If no certificate is configured, the proxy generates a self-signed certificate in the current working directory:
+代理没有配置证书时，会在当前工作目录自动生成自签名证书：
 
 ```text
 cert.pem
 cert_key.pem
 ```
 
-See [PROXY.md](PROXY.md) for details.
+更多说明见 [PROXY.zh-CN.md](PROXY.zh-CN.md)。
 
-## Difficulty
+## 难度说明
 
-BTCRig sends this suggested difficulty by default:
+BTCRig 默认发送：
 
 ```text
 mining.suggest_difficulty = 0.001
 ```
 
-This is only a suggestion. The actual share difficulty is controlled by the pool through `mining.set_difficulty`, and it takes effect from the next `mining.notify` job.
+这是建议值，不是强制值。实际提交难度以矿池下发的 `mining.set_difficulty` 为准，并从下一次 `mining.notify` 开始生效。
 
-## SHA Backend
+## SHA 后端
 
-BTCRig selects a SHA256d backend automatically:
+默认使用自动选择：
 
-- portable C implementation
+- 普通 C 实现
 - OpenSSL SHA256
-- ARMv8 SHA2 path, when both compiler and CPU support it
+- ARMv8 SHA2 专用路径，编译器和 CPU 支持时启用
 
-You can override the backend:
+可以用环境变量指定：
 
 ```bash
 BTC_MINER_SHA_BACKEND=auto ./build/btc_bench -t "$(nproc)" -s 10
@@ -279,11 +277,9 @@ BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
 BTC_MINER_SHA_BACKEND=portable ./build/btc_bench -t "$(nproc)" -s 10
 ```
 
-## Configuration
+## 配置文件
 
-`btc_stratum` loads `config.json` from the current directory by default.
-
-Minimal example:
+默认会读取当前目录的 `config.json`。最小示例：
 
 ```json
 {
