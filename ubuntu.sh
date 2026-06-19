@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-BTC_URL="${BTC_URL:-https://github.com/lxzcl/BTCRig/archive/refs/heads/main.zip}"
+BTC_URL="${BTC_URL:-https://github.com/lxzcl/BTCRig/archive/refs/heads/master.zip}"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/BTCRig}"
 
 if [ "$(id -u)" -eq 0 ]; then

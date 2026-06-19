@@ -25,7 +25,7 @@ agent: BTCRig/1.0
 ## Ubuntu / Debian 自动安装
 
 ```bash
-wget -O ubuntu.sh https://raw.githubusercontent.com/lxzcl/BTCRig/main/ubuntu.sh
+wget -O ubuntu.sh https://raw.githubusercontent.com/lxzcl/BTCRig/master/ubuntu.sh
 chmod +x ubuntu.sh
 ./ubuntu.sh
 ```
@@ -82,7 +82,7 @@ cmake --build build -j"$(nproc)"
 ```bash
 pkg update
 pkg install -y wget
-wget -O termux.sh https://raw.githubusercontent.com/lxzcl/BTCRig/main/termux.sh
+wget -O termux.sh https://raw.githubusercontent.com/lxzcl/BTCRig/master/termux.sh
 chmod +x termux.sh
 ./termux.sh
 ```

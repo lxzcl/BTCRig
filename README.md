@@ -25,7 +25,7 @@ Use `-u` or edit `config.json` to mine with your own wallet.
 ## Ubuntu / Debian Auto Install
 
 ```bash
-wget -O ubuntu.sh https://raw.githubusercontent.com/lxzcl/BTCRig/main/ubuntu.sh
+wget -O ubuntu.sh https://raw.githubusercontent.com/lxzcl/BTCRig/master/ubuntu.sh
 chmod +x ubuntu.sh
 ./ubuntu.sh
 ```
@@ -84,7 +84,7 @@ Override pool or wallet:
 ```bash
 pkg update
 pkg install -y wget
-wget -O termux.sh https://raw.githubusercontent.com/lxzcl/BTCRig/main/termux.sh
+wget -O termux.sh https://raw.githubusercontent.com/lxzcl/BTCRig/master/termux.sh
 chmod +x termux.sh
 ./termux.sh
 ```
