@@ -208,7 +208,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 - 在 GitHub Actions 页面手动运行 `workflow_dispatch`。
 - `master` 或 `dev` 上涉及源码、CMake、配置、版本号或 workflow 文件的代码变动推送。
 
-workflow 会构建三个程序，并上传 zip 产物：
+workflow 会构建三个程序，并生成 zip 产物：
 
 ```text
 BTCRig-v0.1.0-windows-ucrt64.zip
@@ -227,6 +227,12 @@ README 文件
 LICENSE
 VERSION
 ```
+
+Release 行为：
+
+- 推送到 `dev` 时会构建，并把 zip 保存在 GitHub Actions artifact。
+- 推送到 `master` 时会构建，并把 zip 直接发布到 [GitHub Releases](https://github.com/lxzcl/BTCRig/releases)。
+- 手动运行 workflow 时，也可以通过 `publish_release` 选项发布到 Releases。
 
 ## 版本控制
 
@@ -381,6 +387,7 @@ BTC_MINER_SHA_BACKEND=portable ./build/btc_bench -t "$(nproc)" -s 10
 - 英文默认文档和中文翻译文档。
 - 从 `v0.1.0` 开始的统一 `VERSION` 版本控制。
 - GitHub Actions Windows UCRT64 构建和 zip 产物打包。
+- GitHub Actions 在 `master` 和手动发布运行中自动把 Windows zip 推送到 Releases。
 
 ## 后续计划
 

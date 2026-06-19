@@ -2,6 +2,12 @@ name: Windows Build
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish the zip package to GitHub Releases"
+        required: true
+        default: true
+        type: boolean
   push:
     branches:
       - master
@@ -15,7 +21,7 @@ on:
       - "src/**"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   windows-ucrt64:
@@ -99,3 +105,25 @@ jobs:
           name: BTCRig-v${{ steps.version.outputs.version }}-windows-ucrt64
           path: BTCRig-v${{ steps.version.outputs.version }}-windows-ucrt64.zip
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: BTCRig ${{ steps.version.outputs.tag }}
+          body: |
+            Automated Windows UCRT64 build for BTCRig ${{ steps.version.outputs.tag }}.
+
+            Package contents:
+            - btc_stratum.exe
+            - btc_proxy.exe
+            - btc_bench.exe
+            - config.json
+            - proxy.json
+            - required UCRT64 DLL files
+            - README, LICENSE, VERSION
+          files: BTCRig-v${{ steps.version.outputs.version }}-windows-ucrt64.zip
+          fail_on_unmatched_files: true
+          generate_release_notes: true

@@ -4,7 +4,7 @@
 
 The full Windows / MSYS2 UCRT64 build and packaging instructions are in [README.md](README.md).
 
-GitHub Actions already builds the Windows UCRT64 package and uploads a zip artifact containing `btc_stratum.exe`, `btc_proxy.exe`, `btc_bench.exe`, `config.json`, and required DLLs.
+GitHub Actions already builds the Windows UCRT64 package. `dev` builds keep the zip as an Actions artifact, while `master` builds publish the zip directly to GitHub Releases.
 
 Next Windows performance priority: x86 SHA-NI / AVX2 multi-lane parallel SHA256d.
 

@@ -4,7 +4,7 @@
 
 完整 Windows / MSYS2 UCRT64 构建和打包说明见 [README.zh-CN.md](README.zh-CN.md)。
 
-GitHub Actions 已经支持 Windows UCRT64 构建，并上传包含 `btc_stratum.exe`、`btc_proxy.exe`、`btc_bench.exe`、`config.json` 和必要 DLL 的 zip 产物。
+GitHub Actions 已经支持 Windows UCRT64 构建。`dev` 构建会把 zip 保存在 Actions artifact，`master` 构建会把 zip 直接发布到 GitHub Releases。
 
 Windows 性能优化最先提上日程的是 x86 SHA-NI / AVX2 多路并行 SHA256d。
 

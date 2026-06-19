@@ -206,7 +206,7 @@ It runs in two cases:
 - Manual run through GitHub Actions `workflow_dispatch`.
 - Code changes pushed to `master` or `dev` that touch source, CMake, config, version, or the workflow file.
 
-The workflow builds all three programs and uploads a zip artifact:
+The workflow builds all three programs and creates this zip package:
 
 ```text
 BTCRig-v0.1.0-windows-ucrt64.zip
@@ -225,6 +225,12 @@ README files
 LICENSE
 VERSION
 ```
+
+Release behavior:
+
+- Pushes to `dev` build and keep the package as a GitHub Actions artifact.
+- Pushes to `master` build and publish the zip directly to [GitHub Releases](https://github.com/lxzcl/BTCRig/releases).
+- Manual workflow runs can also publish to Releases through the `publish_release` input.
 
 ## Versioning
 
@@ -381,6 +387,7 @@ Minimal example:
 - English default docs with Chinese translations.
 - Unified `VERSION`-based project versioning starting at `v0.1.0`.
 - GitHub Actions Windows UCRT64 build and zip artifact packaging.
+- GitHub Actions release publishing for Windows zip packages on `master` and manual release runs.
 
 ## Roadmap
 
