@@ -17,7 +17,7 @@ pool: stratum+tls://public-pool.io:4333
 user: bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
 pass: x
 suggest difficulty: 0.001
-agent: BTCRig/v0.1.0
+agent: BTCRig/v0.1.1
 ```
 
 如果要使用自己的钱包，请运行时加 `-u`，或者修改 `config.json`。
@@ -211,7 +211,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 workflow 会构建三个程序，并生成 zip 产物：
 
 ```text
-BTCRig-v0.1.0-windows-ucrt64.zip
+BTCRig-v0.1.1-windows-ucrt64.zip
 ```
 
 zip 内包含：
@@ -239,13 +239,13 @@ Release 行为：
 BTCRig 使用根目录 `VERSION` 文件作为唯一版本来源。当前开发版本：
 
 ```text
-0.1.0
+0.1.1
 ```
 
 CMake 会读取这个文件并生成运行时版本宏。矿工上报的 Stratum user agent 是：
 
 ```text
-BTCRig/v0.1.0
+BTCRig/v0.1.1
 ```
 
 常用命令：
@@ -263,8 +263,8 @@ git switch dev
 # 开发和测试
 git switch master
 git merge --ff-only dev
-git tag -a v0.1.0 -m "BTCRig v0.1.0"
-git push origin master v0.1.0
+git tag -a v0.1.1 -m "BTCRig v0.1.1"
+git push origin master v0.1.1
 ```
 
 ## 常用参数
