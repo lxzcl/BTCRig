@@ -134,6 +134,7 @@ add_executable(btc_stratum
     src/stratum.c
     src/console.c
     src/cpu_info.c
+    src/donation.c
     src/miner.c
     ${BTC_MINER_SHA256D_SOURCES}
 )

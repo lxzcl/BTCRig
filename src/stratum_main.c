@@ -2,12 +2,12 @@
 
 #include "console.h"
 #include "cpu_info.h"
+#include "donation.h"
 #include "sha256d.h"
 #include "stratum.h"
 #include "btcrig_version.h"
 
 #include <jansson.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,9 +34,6 @@
 #define DEFAULT_RECONNECT_DELAY 2
 #define MAX_RECONNECT_DELAY 60
 #define DEFAULT_STATS_INTERVAL 5.0
-#define DEFAULT_DONATE_LEVEL 1
-#define DONATE_CYCLE_MINUTES 100
-#define DONATE_USER "bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3"
 
 static char stdout_buffer[1024 * 1024];
 static char stderr_buffer[64 * 1024];
@@ -64,31 +61,6 @@ static double monotonic_seconds(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
-}
-
-static unsigned long long donation_seed(void) {
-    unsigned long long seed = (unsigned long long)time(NULL);
-    seed ^= (unsigned long long)(monotonic_seconds() * 1000000.0);
-#if defined(_WIN32)
-    seed ^= (unsigned long long)GetCurrentProcessId() << 32;
-#else
-    seed ^= (unsigned long long)getpid() << 32;
-#endif
-    seed ^= seed >> 12;
-    seed ^= seed << 25;
-    seed ^= seed >> 27;
-    return seed *  UINT64_C(2685821657736338717);
-}
-
-static double donation_phase_seconds(int donate_level, int donating) {
-    int minutes = donating ? donate_level : DONATE_CYCLE_MINUTES - donate_level;
-    return (double)minutes * 60.0;
-}
-
-static double donation_initial_user_seconds(int donate_level) {
-    unsigned long long seed = donation_seed();
-    double unit = (double)(seed >> 11) * (1.0 / 9007199254740992.0);
-    return donation_phase_seconds(donate_level, 0) * (0.5 + unit);
 }
 
 #if defined(_WIN32)
@@ -197,7 +169,7 @@ static void app_config_set_defaults(app_config_t *config) {
     config->enable_mining = 1;
     config->runtime_seconds = 0.0;
     config->stats_interval = DEFAULT_STATS_INTERVAL;
-    config->donate_level = DEFAULT_DONATE_LEVEL;
+    config->donate_level = DONATION_DEFAULT_LEVEL;
 }
 
 static int json_bool_value(json_t *value, int fallback) {
@@ -314,7 +286,7 @@ static void usage(const char *argv0) {
     printf("  reconnect-delay: %d..%d seconds\n", DEFAULT_RECONNECT_DELAY, MAX_RECONNECT_DELAY);
     printf("  stats: %.1f seconds\n", DEFAULT_STATS_INTERVAL);
     printf("  threads: auto (%d recommended)\n", default_thread_count());
-    printf("  donate-level: %d%% (1 minute in 100 minutes)\n", DEFAULT_DONATE_LEVEL);
+    printf("  donate-level: %d%% (1 minute in 100 minutes)\n", DONATION_DEFAULT_LEVEL);
     printf("\nNotes:\n");
     printf("  TLS and plain TCP are supported: stratum+tls://host:port or stratum+tcp://host:port.\n");
     printf("  stratum+tls:// verifies trusted certificates first, then accepts self-signed TLS if needed.\n");
@@ -460,7 +432,7 @@ int main(int argc, char **argv) {
     if (app_config.stats_interval < 0.0) {
         app_config.stats_interval = 0.0;
     }
-    if (app_config.donate_level < 0 || app_config.donate_level >= DONATE_CYCLE_MINUTES) {
+    if (!donation_level_valid(app_config.donate_level)) {
         fprintf(stderr, "%s[CONFIG]%s donate-level must be between 0 and 99\n",
                 C_BRIGHT_RED, C_RESET);
         return 2;
@@ -495,7 +467,7 @@ int main(int argc, char **argv) {
 
     if (donation_enabled) {
         printf("%s[DONATE]%s level=%d%% address=%s pool=same-as-user\n",
-               C_MAGENTA, C_RESET, app_config.donate_level, DONATE_USER);
+               C_MAGENTA, C_RESET, app_config.donate_level, DONATION_USER);
         printf("%s[DONATE]%s first round scheduled after %.1f minutes of active user mining\n",
                C_MAGENTA, C_RESET, phase_seconds / 60.0);
     }
@@ -515,7 +487,7 @@ int main(int argc, char **argv) {
         pool_config_t *pool = &app_config.pools[pool_index];
         if (donating) {
             donate_pool = *pool;
-            copy_string(donate_pool.user, sizeof(donate_pool.user), DONATE_USER);
+            copy_string(donate_pool.user, sizeof(donate_pool.user), DONATION_USER);
             pool = &donate_pool;
         }
 
