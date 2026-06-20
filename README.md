@@ -17,7 +17,7 @@ pool: stratum+tls://public-pool.io:4333
 user: bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
 pass: x
 suggest difficulty: 0.001
-agent: BTCRig/v0.1.3
+agent: BTCRig/v0.1.4
 ```
 
 Use `-u` or edit `config.json` to mine with your own wallet.
@@ -209,7 +209,7 @@ It runs in two cases:
 The workflow builds all three programs and creates this zip package:
 
 ```text
-BTCRig-v0.1.3-windows-ucrt64.zip
+BTCRig-v0.1.4-windows-ucrt64.zip
 ```
 
 The zip contains:
@@ -237,13 +237,13 @@ Release behavior:
 BTCRig uses a single `VERSION` file as the project version source. The current development version is:
 
 ```text
-0.1.3
+0.1.4
 ```
 
 CMake reads this file and generates the runtime version macros. The miner reports the Stratum user agent as:
 
 ```text
-BTCRig/v0.1.3
+BTCRig/v0.1.4
 ```
 
 Useful commands:
@@ -261,8 +261,8 @@ git switch dev
 # develop and test
 git switch master
 git merge --ff-only dev
-git tag -a v0.1.3 -m "BTCRig v0.1.3"
-git push origin master v0.1.3
+git tag -a v0.1.4 -m "BTCRig v0.1.4"
+git push origin master v0.1.4
 ```
 
 ## Common Options
