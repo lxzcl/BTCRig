@@ -4,7 +4,7 @@
 
 **A compact Bitcoin SHA256d CPU miner, benchmark, and Stratum proxy.**
 
-[简体中文](README.zh-CN.md) · [Releases](https://github.com/lxzcl/BTCRig/releases) · [Wiki](https://github.com/lxzcl/BTCRig/wiki)
+[简体中文](README.zh-CN.md) · [Releases](https://github.com/lxzcl/BTCRig/releases)
 
 ![Release](https://img.shields.io/github/v/release/lxzcl/BTCRig?style=for-the-badge&color=00b894)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Termux-00b894?style=for-the-badge)
@@ -212,7 +212,6 @@ BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
 
 ## Documentation
 
-- [Build and Releases](https://github.com/lxzcl/BTCRig/wiki/Build-and-Releases)
 - [Proxy guide](PROXY.md)
 - [Chinese README](README.zh-CN.md)
 - [Release downloads](https://github.com/lxzcl/BTCRig/releases)

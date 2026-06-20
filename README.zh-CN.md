@@ -4,7 +4,7 @@
 
 **轻量的 Bitcoin SHA256d CPU 矿工、基准测试与 Stratum 代理。**
 
-[English](README.md) · [下载版本](https://github.com/lxzcl/BTCRig/releases) · [Wiki](https://github.com/lxzcl/BTCRig/wiki)
+[English](README.md) · [下载版本](https://github.com/lxzcl/BTCRig/releases)
 
 ![Release](https://img.shields.io/github/v/release/lxzcl/BTCRig?style=for-the-badge&color=00b894)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Termux-00b894?style=for-the-badge)
@@ -212,7 +212,6 @@ BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
 
 ## 文档
 
-- [构建与发布](https://github.com/lxzcl/BTCRig/wiki/Build-and-Releases.zh-CN)
 - [代理说明](PROXY.zh-CN.md)
 - [English README](README.md)
 - [版本下载](https://github.com/lxzcl/BTCRig/releases)
