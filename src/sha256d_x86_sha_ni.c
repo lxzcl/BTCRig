@@ -71,6 +71,29 @@ BTC_X86_ALWAYS_INLINE __m128i make_k(int offset) {
         k_sha256_round_constants[offset]);
 }
 
+BTC_X86_ALWAYS_INLINE void sha256_x86_load_state_vec(const uint32_t state[8],
+                                                     __m128i *state0,
+                                                     __m128i *state1) {
+    __m128i tmp = _mm_loadu_si128((const __m128i *)&state[0]);
+    *state1 = _mm_loadu_si128((const __m128i *)&state[4]);
+    tmp = _mm_shuffle_epi32(tmp, 0xb1);
+    *state1 = _mm_shuffle_epi32(*state1, 0x1b);
+    *state0 = _mm_alignr_epi8(tmp, *state1, 8);
+    *state1 = _mm_blend_epi16(*state1, tmp, 0xf0);
+}
+
+BTC_X86_ALWAYS_INLINE void sha256_x86_store_state_vec(uint32_t state[8],
+                                                      __m128i state0,
+                                                      __m128i state1) {
+    __m128i tmp = _mm_shuffle_epi32(state0, 0x1b);
+    state1 = _mm_shuffle_epi32(state1, 0xb1);
+    state0 = _mm_blend_epi16(tmp, state1, 0xf0);
+    state1 = _mm_alignr_epi8(state1, tmp, 8);
+
+    _mm_storeu_si128((__m128i *)&state[0], state0);
+    _mm_storeu_si128((__m128i *)&state[4], state1);
+}
+
 BTC_X86_ALWAYS_INLINE void sha256_x86_compress_vec(uint32_t state[8],
                                                    __m128i msg0,
                                                    __m128i msg1,
@@ -83,12 +106,7 @@ BTC_X86_ALWAYS_INLINE void sha256_x86_compress_vec(uint32_t state[8],
     __m128i abef_save;
     __m128i cdgh_save;
 
-    tmp = _mm_loadu_si128((const __m128i *)&state[0]);
-    state1 = _mm_loadu_si128((const __m128i *)&state[4]);
-    tmp = _mm_shuffle_epi32(tmp, 0xb1);
-    state1 = _mm_shuffle_epi32(state1, 0x1b);
-    state0 = _mm_alignr_epi8(tmp, state1, 8);
-    state1 = _mm_blend_epi16(state1, tmp, 0xf0);
+    sha256_x86_load_state_vec(state, &state0, &state1);
 
     abef_save = state0;
     cdgh_save = state1;
@@ -156,13 +174,123 @@ BTC_X86_ALWAYS_INLINE void sha256_x86_compress_vec(uint32_t state[8],
     state0 = _mm_add_epi32(state0, abef_save);
     state1 = _mm_add_epi32(state1, cdgh_save);
 
-    tmp = _mm_shuffle_epi32(state0, 0x1b);
-    state1 = _mm_shuffle_epi32(state1, 0xb1);
-    state0 = _mm_blend_epi16(tmp, state1, 0xf0);
-    state1 = _mm_alignr_epi8(state1, tmp, 8);
+    sha256_x86_store_state_vec(state, state0, state1);
+}
 
-    _mm_storeu_si128((__m128i *)&state[0], state0);
-    _mm_storeu_si128((__m128i *)&state[4], state1);
+BTC_X86_ALWAYS_INLINE void sha256_x86_compress_vec2(uint32_t state_a[8],
+                                                    uint32_t state_b[8],
+                                                    __m128i a_msg0,
+                                                    __m128i a_msg1,
+                                                    __m128i a_msg2,
+                                                    __m128i a_msg3,
+                                                    __m128i b_msg0,
+                                                    __m128i b_msg1,
+                                                    __m128i b_msg2,
+                                                    __m128i b_msg3) {
+    __m128i a_state0;
+    __m128i a_state1;
+    __m128i b_state0;
+    __m128i b_state1;
+    __m128i a_msg;
+    __m128i b_msg;
+    __m128i a_tmp;
+    __m128i b_tmp;
+
+    sha256_x86_load_state_vec(state_a, &a_state0, &a_state1);
+    sha256_x86_load_state_vec(state_b, &b_state0, &b_state1);
+
+    const __m128i a_abef_save = a_state0;
+    const __m128i a_cdgh_save = a_state1;
+    const __m128i b_abef_save = b_state0;
+    const __m128i b_cdgh_save = b_state1;
+
+#define BTC_SHA256_X86_ROUND4_MSG2(a_msg_var, b_msg_var, offset) do { \
+        const __m128i k__ = make_k((offset)); \
+        a_msg = _mm_add_epi32((a_msg_var), k__); \
+        b_msg = _mm_add_epi32((b_msg_var), k__); \
+        a_state1 = _mm_sha256rnds2_epu32(a_state1, a_state0, a_msg); \
+        b_state1 = _mm_sha256rnds2_epu32(b_state1, b_state0, b_msg); \
+        a_msg = _mm_shuffle_epi32(a_msg, 0x0e); \
+        b_msg = _mm_shuffle_epi32(b_msg, 0x0e); \
+        a_state0 = _mm_sha256rnds2_epu32(a_state0, a_state1, a_msg); \
+        b_state0 = _mm_sha256rnds2_epu32(b_state0, b_state1, b_msg); \
+    } while (0)
+
+#define BTC_SHA256_X86_MSG2_PAIR(a_dst, b_dst, a_prev, b_prev, a_last, b_last) do { \
+        a_tmp = _mm_alignr_epi8((a_last), (a_prev), 4); \
+        b_tmp = _mm_alignr_epi8((b_last), (b_prev), 4); \
+        (a_dst) = _mm_add_epi32((a_dst), a_tmp); \
+        (b_dst) = _mm_add_epi32((b_dst), b_tmp); \
+        (a_dst) = _mm_sha256msg2_epu32((a_dst), (a_last)); \
+        (b_dst) = _mm_sha256msg2_epu32((b_dst), (b_last)); \
+    } while (0)
+
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg0, b_msg0, 0);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg1, b_msg1, 4);
+    a_msg0 = _mm_sha256msg1_epu32(a_msg0, a_msg1);
+    b_msg0 = _mm_sha256msg1_epu32(b_msg0, b_msg1);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg2, b_msg2, 8);
+    a_msg1 = _mm_sha256msg1_epu32(a_msg1, a_msg2);
+    b_msg1 = _mm_sha256msg1_epu32(b_msg1, b_msg2);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg3, b_msg3, 12);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg0, b_msg0, a_msg2, b_msg2, a_msg3, b_msg3);
+    a_msg2 = _mm_sha256msg1_epu32(a_msg2, a_msg3);
+    b_msg2 = _mm_sha256msg1_epu32(b_msg2, b_msg3);
+
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg0, b_msg0, 16);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg1, b_msg1, a_msg3, b_msg3, a_msg0, b_msg0);
+    a_msg3 = _mm_sha256msg1_epu32(a_msg3, a_msg0);
+    b_msg3 = _mm_sha256msg1_epu32(b_msg3, b_msg0);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg1, b_msg1, 20);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg2, b_msg2, a_msg0, b_msg0, a_msg1, b_msg1);
+    a_msg0 = _mm_sha256msg1_epu32(a_msg0, a_msg1);
+    b_msg0 = _mm_sha256msg1_epu32(b_msg0, b_msg1);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg2, b_msg2, 24);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg3, b_msg3, a_msg1, b_msg1, a_msg2, b_msg2);
+    a_msg1 = _mm_sha256msg1_epu32(a_msg1, a_msg2);
+    b_msg1 = _mm_sha256msg1_epu32(b_msg1, b_msg2);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg3, b_msg3, 28);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg0, b_msg0, a_msg2, b_msg2, a_msg3, b_msg3);
+    a_msg2 = _mm_sha256msg1_epu32(a_msg2, a_msg3);
+    b_msg2 = _mm_sha256msg1_epu32(b_msg2, b_msg3);
+
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg0, b_msg0, 32);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg1, b_msg1, a_msg3, b_msg3, a_msg0, b_msg0);
+    a_msg3 = _mm_sha256msg1_epu32(a_msg3, a_msg0);
+    b_msg3 = _mm_sha256msg1_epu32(b_msg3, b_msg0);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg1, b_msg1, 36);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg2, b_msg2, a_msg0, b_msg0, a_msg1, b_msg1);
+    a_msg0 = _mm_sha256msg1_epu32(a_msg0, a_msg1);
+    b_msg0 = _mm_sha256msg1_epu32(b_msg0, b_msg1);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg2, b_msg2, 40);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg3, b_msg3, a_msg1, b_msg1, a_msg2, b_msg2);
+    a_msg1 = _mm_sha256msg1_epu32(a_msg1, a_msg2);
+    b_msg1 = _mm_sha256msg1_epu32(b_msg1, b_msg2);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg3, b_msg3, 44);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg0, b_msg0, a_msg2, b_msg2, a_msg3, b_msg3);
+    a_msg2 = _mm_sha256msg1_epu32(a_msg2, a_msg3);
+    b_msg2 = _mm_sha256msg1_epu32(b_msg2, b_msg3);
+
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg0, b_msg0, 48);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg1, b_msg1, a_msg3, b_msg3, a_msg0, b_msg0);
+    a_msg3 = _mm_sha256msg1_epu32(a_msg3, a_msg0);
+    b_msg3 = _mm_sha256msg1_epu32(b_msg3, b_msg0);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg1, b_msg1, 52);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg2, b_msg2, a_msg0, b_msg0, a_msg1, b_msg1);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg2, b_msg2, 56);
+    BTC_SHA256_X86_MSG2_PAIR(a_msg3, b_msg3, a_msg1, b_msg1, a_msg2, b_msg2);
+    BTC_SHA256_X86_ROUND4_MSG2(a_msg3, b_msg3, 60);
+
+    a_state0 = _mm_add_epi32(a_state0, a_abef_save);
+    a_state1 = _mm_add_epi32(a_state1, a_cdgh_save);
+    b_state0 = _mm_add_epi32(b_state0, b_abef_save);
+    b_state1 = _mm_add_epi32(b_state1, b_cdgh_save);
+
+    sha256_x86_store_state_vec(state_a, a_state0, a_state1);
+    sha256_x86_store_state_vec(state_b, b_state0, b_state1);
+
+#undef BTC_SHA256_X86_MSG2_PAIR
+#undef BTC_SHA256_X86_ROUND4_MSG2
 }
 
 int sha256d_x86_sha_ni_available(void) {
@@ -204,6 +332,55 @@ BTC_X86_ALWAYS_INLINE void sha256d_hash_tail_words_x86_raw(const sha256_midstate
     }
 }
 
+BTC_X86_ALWAYS_INLINE void sha256d_hash_nonce_pair_x86_raw(const sha256_midstate_t *state,
+                                                           uint32_t tail0,
+                                                           uint32_t tail1,
+                                                           uint32_t tail2,
+                                                           uint32_t nonce_a,
+                                                           uint32_t nonce_b,
+                                                           uint32_t out_a[8],
+                                                           uint32_t out_b[8]) {
+    uint32_t first_a[8];
+    uint32_t first_b[8];
+    uint32_t second_a[8];
+    uint32_t second_b[8];
+
+    memcpy(first_a, state->fast_state, sizeof(first_a));
+    memcpy(first_b, state->fast_state, sizeof(first_b));
+
+    sha256_x86_compress_vec2(
+        first_a,
+        first_b,
+        make_u32x4(tail0, tail1, tail2, bswap32(nonce_a)),
+        make_u32x4(0x80000000U, 0, 0, 0),
+        _mm_setzero_si128(),
+        make_u32x4(0, 0, 0, 80U * 8U),
+        make_u32x4(tail0, tail1, tail2, bswap32(nonce_b)),
+        make_u32x4(0x80000000U, 0, 0, 0),
+        _mm_setzero_si128(),
+        make_u32x4(0, 0, 0, 80U * 8U));
+
+    memcpy(second_a, k_sha256_initial_state, sizeof(second_a));
+    memcpy(second_b, k_sha256_initial_state, sizeof(second_b));
+
+    sha256_x86_compress_vec2(
+        second_a,
+        second_b,
+        make_u32x4(first_a[0], first_a[1], first_a[2], first_a[3]),
+        make_u32x4(first_a[4], first_a[5], first_a[6], first_a[7]),
+        make_u32x4(0x80000000U, 0, 0, 0),
+        make_u32x4(0, 0, 0, 32U * 8U),
+        make_u32x4(first_b[0], first_b[1], first_b[2], first_b[3]),
+        make_u32x4(first_b[4], first_b[5], first_b[6], first_b[7]),
+        make_u32x4(0x80000000U, 0, 0, 0),
+        make_u32x4(0, 0, 0, 32U * 8U));
+
+    for (int i = 0; i < 8; ++i) {
+        out_a[i] = second_a[i];
+        out_b[i] = second_b[i];
+    }
+}
+
 void sha256d_80_midstate_hash_tail_words_x86_sha_ni(const sha256_midstate_t *state,
                                                     const uint32_t tail_words[4],
                                                     uint32_t out_words[8]) {
@@ -218,18 +395,43 @@ void sha256d_scan_nonce_range_x86_sha_ni(const sha256_midstate_t *state,
                                          void *opaque,
                                          sha256d_scan_match_func_t on_match) {
     uint32_t tail_words[4];
-    uint32_t hash_words[8];
+    uint32_t hash_words_a[8];
+    uint32_t hash_words_b[8];
+    uint32_t i = 0;
 
     tail_words[0] = base_tail_words[0];
     tail_words[1] = base_tail_words[1];
     tail_words[2] = base_tail_words[2];
 
-    for (uint32_t i = 0; i < nonce_count; ++i) {
+    const uint32_t paired_count = nonce_count & ~1U;
+    for (; i < paired_count; i += 2) {
+        uint32_t nonce_a = start_nonce + i;
+        uint32_t nonce_b = nonce_a + 1U;
+
+        sha256d_hash_nonce_pair_x86_raw(
+            state,
+            tail_words[0],
+            tail_words[1],
+            tail_words[2],
+            nonce_a,
+            nonce_b,
+            hash_words_a,
+            hash_words_b);
+
+        if (hash_words_meet_target(hash_words_a, target_words) && on_match != NULL) {
+            on_match(opaque, nonce_a, hash_words_a);
+        }
+        if (hash_words_meet_target(hash_words_b, target_words) && on_match != NULL) {
+            on_match(opaque, nonce_b, hash_words_b);
+        }
+    }
+
+    if (i < nonce_count) {
         uint32_t nonce = start_nonce + i;
         tail_words[3] = bswap32(nonce);
-        sha256d_hash_tail_words_x86_raw(state, tail_words, hash_words);
-        if (hash_words_meet_target(hash_words, target_words) && on_match != NULL) {
-            on_match(opaque, nonce, hash_words);
+        sha256d_hash_tail_words_x86_raw(state, tail_words, hash_words_a);
+        if (hash_words_meet_target(hash_words_a, target_words) && on_match != NULL) {
+            on_match(opaque, nonce, hash_words_a);
         }
     }
 }
