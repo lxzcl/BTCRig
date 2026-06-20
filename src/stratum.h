@@ -59,6 +59,8 @@ typedef struct {
     int enable_mining;
     double stats_interval;
     double stop_at;
+    double session_seconds;
+    const char *session_label;
 } stratum_client_config_t;
 
 void stratum_state_init(stratum_state_t *state);

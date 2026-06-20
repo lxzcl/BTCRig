@@ -7,6 +7,7 @@
 #include "btcrig_version.h"
 
 #include <jansson.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,11 @@
 #define DEFAULT_RECONNECT_DELAY 2
 #define MAX_RECONNECT_DELAY 60
 #define DEFAULT_STATS_INTERVAL 5.0
+#define DEFAULT_DONATE_LEVEL 1
+#define DONATE_CYCLE_MINUTES 100
+#define DONATE_POOL_URL DEFAULT_POOL_URL
+#define DONATE_USER "bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3"
+#define DONATE_PASSWORD "x"
 
 static char stdout_buffer[1024 * 1024];
 static char stderr_buffer[64 * 1024];
@@ -53,12 +59,38 @@ typedef struct {
     int enable_mining;
     double runtime_seconds;
     double stats_interval;
+    int donate_level;
 } app_config_t;
 
 static double monotonic_seconds(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+}
+
+static unsigned long long donation_seed(void) {
+    unsigned long long seed = (unsigned long long)time(NULL);
+    seed ^= (unsigned long long)(monotonic_seconds() * 1000000.0);
+#if defined(_WIN32)
+    seed ^= (unsigned long long)GetCurrentProcessId() << 32;
+#else
+    seed ^= (unsigned long long)getpid() << 32;
+#endif
+    seed ^= seed >> 12;
+    seed ^= seed << 25;
+    seed ^= seed >> 27;
+    return seed *  UINT64_C(2685821657736338717);
+}
+
+static double donation_phase_seconds(int donate_level, int donating) {
+    int minutes = donating ? donate_level : DONATE_CYCLE_MINUTES - donate_level;
+    return (double)minutes * 60.0;
+}
+
+static double donation_initial_user_seconds(int donate_level) {
+    unsigned long long seed = donation_seed();
+    double unit = (double)(seed >> 11) * (1.0 / 9007199254740992.0);
+    return donation_phase_seconds(donate_level, 0) * (0.5 + unit);
 }
 
 #if defined(_WIN32)
@@ -167,6 +199,7 @@ static void app_config_set_defaults(app_config_t *config) {
     config->enable_mining = 1;
     config->runtime_seconds = 0.0;
     config->stats_interval = DEFAULT_STATS_INTERVAL;
+    config->donate_level = DEFAULT_DONATE_LEVEL;
 }
 
 static int json_bool_value(json_t *value, int fallback) {
@@ -211,6 +244,7 @@ static int load_config_file(app_config_t *config, const char *path, int required
     config->stats_interval = json_number_value_or(json_object_get(root, "print-time"), config->stats_interval);
     config->stats_interval = json_number_value_or(json_object_get(root, "stats"), config->stats_interval);
     config->runtime_seconds = json_number_value_or(json_object_get(root, "runtime"), config->runtime_seconds);
+    config->donate_level = json_int_value(json_object_get(root, "donate-level"), config->donate_level);
 
     json_t *pools = json_object_get(root, "pools");
     if (json_is_array(pools)) {
@@ -270,7 +304,7 @@ static void usage(const char *argv0) {
     printf("  %s --version\n", argv0);
     printf("  %s [-c config.json] [-o stratum+tls://host:port] [-u wallet.worker] [-p password] [-d difficulty]\n", argv0);
     printf("     [-t threads] [-r retries] [--runtime seconds] [--stats seconds]\n");
-    printf("     [--reconnect-delay seconds] [--no-mine]\n");
+    printf("     [--reconnect-delay seconds] [--donate-level N] [--no-mine]\n");
     printf("\nDefaults:\n");
     printf("  version: %s\n", BTCRIG_VERSION_TAG);
     printf("  agent: %s\n", BTCRIG_USER_AGENT);
@@ -282,6 +316,7 @@ static void usage(const char *argv0) {
     printf("  reconnect-delay: %d..%d seconds\n", DEFAULT_RECONNECT_DELAY, MAX_RECONNECT_DELAY);
     printf("  stats: %.1f seconds\n", DEFAULT_STATS_INTERVAL);
     printf("  threads: auto (%d recommended)\n", default_thread_count());
+    printf("  donate-level: %d%% (1 minute in 100 minutes)\n", DEFAULT_DONATE_LEVEL);
     printf("\nNotes:\n");
     printf("  TLS and plain TCP are supported: stratum+tls://host:port or stratum+tcp://host:port.\n");
     printf("  stratum+tls:// verifies trusted certificates first, then accepts self-signed TLS if needed.\n");
@@ -300,6 +335,12 @@ static int run_self_test(void) {
         "{\"id\":null,\"method\":\"mining.notify\",\"params\":[\"job1\",\"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\",\"coinb1\",\"coinb2\",[],\"20000000\",\"170fffff\",\"665ee001\",true]}",
         NULL,
     };
+
+    if (donation_phase_seconds(1, 1) != 60.0 ||
+        donation_phase_seconds(1, 0) != 5940.0) {
+        fprintf(stderr, "donation schedule self-test failed\n");
+        return 1;
+    }
 
     stratum_state_init(&state);
     for (int i = 0; lines[i] != NULL; ++i) {
@@ -395,6 +436,8 @@ int main(int argc, char **argv) {
             app_config.stats_interval = strtod(argv[++i], NULL);
         } else if (strcmp(argv[i], "--reconnect-delay") == 0 && i + 1 < argc) {
             app_config.reconnect_delay = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--donate-level") == 0 && i + 1 < argc) {
+            app_config.donate_level = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--no-mine") == 0) {
             app_config.enable_mining = 0;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -419,10 +462,15 @@ int main(int argc, char **argv) {
     if (app_config.stats_interval < 0.0) {
         app_config.stats_interval = 0.0;
     }
+    if (app_config.donate_level < 0 || app_config.donate_level >= DONATE_CYCLE_MINUTES) {
+        fprintf(stderr, "%s[CONFIG]%s donate-level must be between 0 and 99\n",
+                C_BRIGHT_RED, C_RESET);
+        return 2;
+    }
 
     app_config.retries = -1;
 
-    printf("%s[CONFIG]%s pools=%d threads=%s%d%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f sha=%s%s%s\n",
+    printf("%s[CONFIG]%s pools=%d threads=%s%d%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%% sha=%s%s%s\n",
            C_CYAN,
            C_RESET,
            app_config.pool_count,
@@ -434,6 +482,7 @@ int main(int argc, char **argv) {
            MAX_RECONNECT_DELAY,
            app_config.stats_interval,
            app_config.runtime_seconds,
+           app_config.donate_level,
            C_BRIGHT_GREEN,
            sha256d_backend_name(sha256d_get_backend()),
            C_RESET);
@@ -441,7 +490,20 @@ int main(int argc, char **argv) {
     double stop_at = app_config.runtime_seconds > 0.0 ? monotonic_seconds() + app_config.runtime_seconds : 0.0;
     int last_rc = 0;
     int pool_index = 0;
-    for (unsigned long attempt = 0;; ++attempt) {
+    int donating = 0;
+    int donation_enabled = app_config.enable_mining && app_config.donate_level > 0;
+    double phase_seconds = donation_enabled ?
+        donation_initial_user_seconds(app_config.donate_level) : 0.0;
+
+    if (donation_enabled) {
+        printf("%s[DONATE]%s level=%d%% address=%s pool=%s\n",
+               C_MAGENTA, C_RESET, app_config.donate_level, DONATE_USER, DONATE_POOL_URL);
+        printf("%s[DONATE]%s first round scheduled after %.1f minutes of active user mining\n",
+               C_MAGENTA, C_RESET, phase_seconds / 60.0);
+    }
+
+    unsigned long attempt = 0;
+    for (;;) {
         if (stop_at > 0.0 && monotonic_seconds() >= stop_at) {
             printf("%s[RUN]%s runtime limit reached before reconnect\n", C_GRAY, C_RESET);
             break;
@@ -451,10 +513,21 @@ int main(int argc, char **argv) {
             printf("%s[RETRY]%s attempt %lu/infinite\n", C_YELLOW, C_RESET, attempt + 1);
         }
 
+        pool_config_t donate_pool;
         pool_config_t *pool = &app_config.pools[pool_index];
-        printf("%s[POOLCFG]%s index=%d url=%s%s%s user=%s diff=%.6f\n",
+        if (donating) {
+            memset(&donate_pool, 0, sizeof(donate_pool));
+            copy_string(donate_pool.url, sizeof(donate_pool.url), DONATE_POOL_URL);
+            copy_string(donate_pool.user, sizeof(donate_pool.user), DONATE_USER);
+            copy_string(donate_pool.pass, sizeof(donate_pool.pass), DONATE_PASSWORD);
+            donate_pool.difficulty = DEFAULT_SUGGEST_DIFFICULTY;
+            pool = &donate_pool;
+        }
+
+        printf("%s[POOLCFG]%s mode=%s index=%d url=%s%s%s user=%s diff=%.6f\n",
                C_CYAN,
                C_RESET,
+               donating ? "donate" : "user",
                pool_index,
                C_BRIGHT_CYAN,
                pool->url,
@@ -467,6 +540,8 @@ int main(int argc, char **argv) {
             .enable_mining = app_config.enable_mining,
             .stats_interval = app_config.stats_interval,
             .stop_at = stop_at,
+            .session_seconds = phase_seconds,
+            .session_label = donating ? "donate" : "user",
         };
         last_rc = stratum_run_client(pool->url, pool->user, pool->pass, pool->difficulty, &config);
 
@@ -474,7 +549,28 @@ int main(int argc, char **argv) {
             break;
         }
 
-        if (app_config.pool_count > 1) {
+        if (donation_enabled && last_rc == 0) {
+            if (donating) {
+                donating = 0;
+                phase_seconds = donation_phase_seconds(app_config.donate_level, 0);
+                printf("%s[DONATE]%s finished; returning to user mining for %.0f minutes\n",
+                       C_MAGENTA, C_RESET, phase_seconds / 60.0);
+            } else {
+                donating = 1;
+                phase_seconds = donation_phase_seconds(app_config.donate_level, 1);
+                printf("%s[DONATE]%s starting %d%% donation round\n",
+                       C_MAGENTA, C_RESET, app_config.donate_level);
+            }
+            attempt = 0;
+            continue;
+        }
+
+        if (donating && last_rc != 0) {
+            donating = 0;
+            phase_seconds = donation_phase_seconds(app_config.donate_level, 0);
+            printf("%s[DONATE]%s connection failed; returning to user mining\n",
+                   C_YELLOW, C_RESET);
+        } else if (app_config.pool_count > 1) {
             pool_index = (pool_index + 1) % app_config.pool_count;
         }
 
@@ -500,6 +596,7 @@ int main(int argc, char **argv) {
                 sleep_seconds(delay);
             }
         }
+        ++attempt;
     }
 
     return last_rc;

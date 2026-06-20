@@ -1285,6 +1285,9 @@ int stratum_run_client(const char *url,
     int enable_mining = config == NULL || config->enable_mining;
     double stats_interval = config != NULL ? config->stats_interval : 5.0;
     double stop_at = config != NULL ? config->stop_at : 0.0;
+    double session_seconds = config != NULL ? config->session_seconds : 0.0;
+    const char *session_label = config != NULL ? config->session_label : NULL;
+    double session_stop_at = 0.0;
     int run_result = 0;
 
     memset(&keyboard, 0, sizeof(keyboard));
@@ -1357,6 +1360,13 @@ int stratum_run_client(const char *url,
             printf("%s[RUN]%s runtime limit reached\n", C_GRAY, C_RESET);
             break;
         }
+        if (session_stop_at > 0.0 && monotonic_seconds() >= session_stop_at) {
+            printf("%s[SESSION]%s %s period complete\n",
+                   C_CYAN,
+                   C_RESET,
+                   session_label != NULL ? session_label : "scheduled");
+            break;
+        }
 
         handle_keyboard_input(&state, &keyboard, last_thread_hashes, thread_count, &last_thread_time);
 
@@ -1402,6 +1412,16 @@ int stratum_run_client(const char *url,
                 break;
             }
             suggest_sent = 1;
+        }
+
+        if (session_stop_at == 0.0 && session_seconds > 0.0 &&
+            state.authorized && state.notify_count > 0) {
+            session_stop_at = monotonic_seconds() + session_seconds;
+            printf("%s[SESSION]%s %s active for %.0f seconds\n",
+                   C_CYAN,
+                   C_RESET,
+                   session_label != NULL ? session_label : "scheduled",
+                   session_seconds);
         }
     }
 

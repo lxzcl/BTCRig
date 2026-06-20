@@ -17,7 +17,7 @@ pool: stratum+tls://public-pool.io:4333
 user: bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
 pass: x
 suggest difficulty: 0.001
-agent: BTCRig/v0.1.1
+agent: BTCRig/v0.2.0
 ```
 
 Use `-u` or edit `config.json` to mine with your own wallet.
@@ -209,7 +209,7 @@ It runs in two cases:
 The workflow builds all three programs and creates this zip package:
 
 ```text
-BTCRig-v0.1.1-windows-ucrt64.zip
+BTCRig-v0.2.0-windows-ucrt64.zip
 ```
 
 The zip contains:
@@ -237,13 +237,13 @@ Release behavior:
 BTCRig uses a single `VERSION` file as the project version source. The current development version is:
 
 ```text
-0.1.1
+0.2.0
 ```
 
 CMake reads this file and generates the runtime version macros. The miner reports the Stratum user agent as:
 
 ```text
-BTCRig/v0.1.1
+BTCRig/v0.2.0
 ```
 
 Useful commands:
@@ -261,8 +261,8 @@ git switch dev
 # develop and test
 git switch master
 git merge --ff-only dev
-git tag -a v0.1.1 -m "BTCRig v0.1.1"
-git push origin master v0.1.1
+git tag -a v0.2.0 -m "BTCRig v0.2.0"
+git push origin master v0.2.0
 ```
 
 ## Common Options
@@ -275,12 +275,19 @@ git push origin master v0.1.1
 -t, --threads N            CPU thread count, 0 means auto
 --stats N                  print stats every N seconds
 --runtime N                run for N seconds, 0 means unlimited
+--donate-level N           donation percentage, default 1, 0 disables it
 --no-mine                  test the connection without mining
 --cpu-info                 print CPU information
 --self-test                run Stratum parser self-test
 ```
 
 Network reconnects are continuous. The reconnect delay starts at `retry-pause` and backs off up to 60 seconds.
+
+## Developer Donation
+
+BTCRig defaults to a transparent 1% developer donation, following XMRig's time-based model. For the default level, the miner works for the configured user for 99 minutes and then mines for the developer address for 1 minute. The first donation is randomized between 49.5 and 148.5 minutes of active user mining so clients do not all switch at once.
+
+Donation time starts only after the donation connection is authorized and has received a job. If that connection fails, BTCRig immediately returns to the configured user pool. The current mode, address, pool, and schedule are printed in the console. Set `"donate-level": 0` or use `--donate-level 0` to disable it.
 
 ## Interactive Keys
 
@@ -376,6 +383,7 @@ Minimal example:
   ],
   "retries": -1,
   "retry-pause": 2,
+  "donate-level": 1,
   "print-time": 10,
   "runtime": 0
 }
@@ -396,6 +404,7 @@ Minimal example:
 - GitHub Actions Windows UCRT64 build and zip artifact packaging.
 - GitHub Actions release publishing for Windows zip packages on `master` and manual release runs.
 - x86 SHA-NI SHA256d backend with OpenSSL fallback.
+- Transparent XMRig-style time-based developer donation, defaulting to 1%.
 
 ## Roadmap
 

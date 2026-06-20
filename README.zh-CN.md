@@ -17,7 +17,7 @@ pool: stratum+tls://public-pool.io:4333
 user: bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
 pass: x
 suggest difficulty: 0.001
-agent: BTCRig/v0.1.1
+agent: BTCRig/v0.2.0
 ```
 
 如果要使用自己的钱包，请运行时加 `-u`，或者修改 `config.json`。
@@ -211,7 +211,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 workflow 会构建三个程序，并生成 zip 产物：
 
 ```text
-BTCRig-v0.1.1-windows-ucrt64.zip
+BTCRig-v0.2.0-windows-ucrt64.zip
 ```
 
 zip 内包含：
@@ -239,13 +239,13 @@ Release 行为：
 BTCRig 使用根目录 `VERSION` 文件作为唯一版本来源。当前开发版本：
 
 ```text
-0.1.1
+0.2.0
 ```
 
 CMake 会读取这个文件并生成运行时版本宏。矿工上报的 Stratum user agent 是：
 
 ```text
-BTCRig/v0.1.1
+BTCRig/v0.2.0
 ```
 
 常用命令：
@@ -263,8 +263,8 @@ git switch dev
 # 开发和测试
 git switch master
 git merge --ff-only dev
-git tag -a v0.1.1 -m "BTCRig v0.1.1"
-git push origin master v0.1.1
+git tag -a v0.2.0 -m "BTCRig v0.2.0"
+git push origin master v0.2.0
 ```
 
 ## 常用参数
@@ -277,12 +277,19 @@ git push origin master v0.1.1
 -t, --threads N            指定 CPU 线程数，0 表示自动
 --stats N                  每 N 秒输出统计
 --runtime N                运行 N 秒，0 表示不限时
+--donate-level N           捐助比例，默认 1，设为 0 可关闭
 --no-mine                  只测试连接，不启动挖矿
 --cpu-info                 显示 CPU 信息
 --self-test                运行 Stratum 解析自测
 ```
 
 网络断开后程序会持续重连，等待时间从 `retry-pause` 开始递增，最多 60 秒一次。
+
+## 开发者捐助
+
+BTCRig 默认启用透明的 1% 开发者捐助，调度方式参考 XMRig。默认情况下，程序使用配置的钱包挖矿 99 分钟，然后为开发者地址挖矿 1 分钟。第一次捐助会在累计 49.5 至 148.5 分钟的有效用户挖矿时间后随机触发，避免大量客户端同时切换。
+
+只有捐助连接完成授权并收到有效任务后才开始计算捐助时间。如果捐助连接失败，程序会立即返回用户矿池。控制台会明确显示当前模式、地址、矿池和调度时间。可以在配置文件中设置 `"donate-level": 0`，或运行时使用 `--donate-level 0` 关闭。
 
 ## 交互按键
 
@@ -376,6 +383,7 @@ AVX2 多路 nonce 批处理属于下一阶段优化。
   ],
   "retries": -1,
   "retry-pause": 2,
+  "donate-level": 1,
   "print-time": 10,
   "runtime": 0
 }
@@ -396,6 +404,7 @@ AVX2 多路 nonce 批处理属于下一阶段优化。
 - GitHub Actions Windows UCRT64 构建和 zip 产物打包。
 - GitHub Actions 在 `master` 和手动发布运行中自动把 Windows zip 推送到 Releases。
 - x86 SHA-NI SHA256d 后端，并保留 OpenSSL 回退。
+- 透明的 XMRig 风格定时开发者捐助，默认比例为 1%。
 
 ## 后续计划
 
