@@ -13,7 +13,7 @@
 
 </div>
 
-BTCRig turns idle CPU resources on Windows, Linux, Android/Termux, x86 PCs, and ARM boards into usable compute power. The project is intended for SHA256d learning, benchmarking, and low-power solo-mining experiments, not for competing with ASIC miners.
+BTCRig turns idle CPU resources on Windows, Linux, Android/Termux, x86 PCs, and ARM boards into usable compute power.
 
 ## Programs
 

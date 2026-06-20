@@ -13,7 +13,7 @@
 
 </div>
 
-BTCRig 将 Windows、Linux、Android/Termux、x86 PC 和 ARM 开发板上的闲置 CPU 资源转化为算力。项目用于 SHA256d 学习、性能测试和低功耗 solo 挖矿实验，目标不是与 ASIC 矿机竞争。
+BTCRig 将 Windows、Linux、Android/Termux、x86 PC 和 ARM 开发板上的闲置 CPU 资源转化为算力。
 
 ## 程序组成
 
