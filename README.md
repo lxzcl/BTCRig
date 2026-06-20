@@ -13,7 +13,7 @@
 
 </div>
 
-BTCRig is an experimental project for learning, benchmarking, and low-power solo-mining experiments. It is not intended to compete with ASIC miners.
+BTCRig turns otherwise idle CPU capacity across Windows, Linux, Android/Termux, x86 PCs, and ARM boards into a shared platform for SHA256d learning, benchmarking, and low-power solo-mining experiments. It is not intended to compete with ASIC miners.
 
 ## Programs
 
@@ -26,12 +26,13 @@ BTCRig is an experimental project for learning, benchmarking, and low-power solo
 ## Highlights
 
 - Automatic backend selection: x86 SHA-NI, ARMv8 SHA2, OpenSSL, or portable C.
+- Built for reusing heterogeneous idle devices instead of leaving their CPU capacity unused.
 - Two-lane interleaved x86 SHA-NI scanning and dedicated ARMv8 SHA2 range scanning.
 - Uses every logical CPU by default; thread count remains configurable.
 - Continuous network reconnect with bounded backoff.
 - Plain TCP and verified or compatible TLS pool connections.
 - Human-readable hashrate units and per-thread runtime statistics.
-- Default developer donation is **disabled (`0%`)**.
+- Optional donation scheduling remains available, but defaults to **`0%`** and does not run in hash-worker code when disabled.
 
 ## Quick Start
 
