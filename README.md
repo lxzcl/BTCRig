@@ -338,14 +338,21 @@ BTCRig selects a SHA256d backend automatically:
 - portable C implementation
 - OpenSSL SHA256
 - ARMv8 SHA2 path, when both compiler and CPU support it
+- x86 SHA-NI path, when both compiler and CPU support it
 
 You can override the backend:
 
 ```bash
 BTC_MINER_SHA_BACKEND=auto ./build/btc_bench -t "$(nproc)" -s 10
 BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
-BTC_MINER_SHA_BACKEND=portable ./build/btc_bench -t "$(nproc)" -s 10
+BTC_MINER_SHA_BACKEND=fast-c ./build/btc_bench -t "$(nproc)" -s 10
+BTC_MINER_SHA_BACKEND=x86-sha-ni ./build/btc_bench -t "$(nproc)" -s 10
+BTC_MINER_SHA_BACKEND=arm-sha2 ./build/btc_bench -t "$(nproc)" -s 10
 ```
+
+On x86 CPUs, `auto` prefers `x86-sha-ni` when available and falls back to OpenSSL otherwise.
+The first x86 backend uses SHA-NI for the SHA256 round and message-schedule instructions.
+AVX2 multi-lane nonce batching is a separate future optimization.
 
 ## Configuration
 
@@ -388,12 +395,13 @@ Minimal example:
 - Unified `VERSION`-based project versioning starting at `v0.1.0`.
 - GitHub Actions Windows UCRT64 build and zip artifact packaging.
 - GitHub Actions release publishing for Windows zip packages on `master` and manual release runs.
+- x86 SHA-NI SHA256d backend with OpenSSL fallback.
 
 ## Roadmap
 
-- Windows x86 SHA-NI / AVX2 multi-lane parallel SHA256d backend.
+- x86 AVX2 multi-lane nonce batching on top of the SHA-NI backend.
 - Linux and Termux GitHub Actions builds.
 - Versioned GitHub Releases with tagged artifacts.
-- More benchmark modes for comparing OpenSSL, portable C, ARM SHA2, and future x86 backends.
+- More benchmark modes for comparing OpenSSL, portable C, ARM SHA2, x86 SHA-NI, and future AVX2 batching.
 - Cleaner release packaging for Windows and Linux.
 - Additional mining stability diagnostics for duplicate shares, reconnects, and pool difficulty changes.

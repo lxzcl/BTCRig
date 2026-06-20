@@ -30,10 +30,14 @@ configure_file(
 
 set(BTC_MINER_SHA256D_SOURCES src/sha256d.c)
 set(BTC_MINER_ARM_SHA2_FLAGS "")
+set(BTC_MINER_X86_SHA_NI_FLAGS "")
 
 check_c_compiler_flag("-march=native" HAS_MARCH_NATIVE)
 check_c_compiler_flag("-mcpu=native" HAS_MCPU_NATIVE)
 check_c_compiler_flag("-march=armv8-a+crypto" HAS_MARCH_ARMV8_CRYPTO)
+check_c_compiler_flag("-msha" HAS_MSHA)
+check_c_compiler_flag("-mssse3" HAS_MSSSE3)
+check_c_compiler_flag("-msse4.1" HAS_MSSE41)
 if(BTC_MINER_NATIVE AND HAS_MCPU_NATIVE)
     set(BTC_MINER_ARM_SHA2_FLAGS "-mcpu=native")
 elseif(HAS_MARCH_ARMV8_CRYPTO)
@@ -58,6 +62,28 @@ if(HAS_ARM_SHA2_INTRINSICS)
     list(APPEND BTC_MINER_SHA256D_SOURCES src/sha256d_arm_sha2.c)
     set_source_files_properties(src/sha256d_arm_sha2.c PROPERTIES
         COMPILE_OPTIONS "${BTC_MINER_ARM_SHA2_FLAGS}"
+    )
+endif()
+
+if(HAS_MSHA AND HAS_MSSSE3 AND HAS_MSSE41)
+    set(BTC_MINER_X86_SHA_NI_FLAGS "-msha;-mssse3;-msse4.1")
+    set(CMAKE_REQUIRED_FLAGS_SAVE "${CMAKE_REQUIRED_FLAGS}")
+    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -msha -mssse3 -msse4.1")
+    check_c_source_compiles("
+        #include <immintrin.h>
+        int main(void) {
+            __m128i x = _mm_setzero_si128();
+            x = _mm_sha256rnds2_epu32(x, x, x);
+            return _mm_cvtsi128_si32(x);
+        }
+    " HAS_X86_SHA_NI_INTRINSICS)
+    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS_SAVE}")
+endif()
+
+if(HAS_X86_SHA_NI_INTRINSICS)
+    list(APPEND BTC_MINER_SHA256D_SOURCES src/sha256d_x86_sha_ni.c)
+    set_source_files_properties(src/sha256d_x86_sha_ni.c PROPERTIES
+        COMPILE_OPTIONS "${BTC_MINER_X86_SHA_NI_FLAGS}"
     )
 endif()
 
@@ -89,6 +115,10 @@ endif()
 
 if(HAS_ARM_SHA2_INTRINSICS)
     target_compile_definitions(btc_bench PRIVATE BTC_MINER_ARM_SHA2)
+endif()
+
+if(HAS_X86_SHA_NI_INTRINSICS)
+    target_compile_definitions(btc_bench PRIVATE BTC_MINER_X86_SHA_NI)
 endif()
 
 target_link_libraries(btc_bench PRIVATE
@@ -126,6 +156,10 @@ target_compile_definitions(btc_stratum PRIVATE
 
 if(HAS_ARM_SHA2_INTRINSICS)
     target_compile_definitions(btc_stratum PRIVATE BTC_MINER_ARM_SHA2)
+endif()
+
+if(HAS_X86_SHA_NI_INTRINSICS)
+    target_compile_definitions(btc_stratum PRIVATE BTC_MINER_X86_SHA_NI)
 endif()
 
 target_link_libraries(btc_stratum PRIVATE

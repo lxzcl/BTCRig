@@ -111,6 +111,10 @@ static int sha256d_self_check(void) {
         sha256d_self_check_backend(SHA256D_BACKEND_ARM_SHA2) != 0) {
         return -1;
     }
+    if (sha256d_backend_available(SHA256D_BACKEND_X86_SHA_NI) &&
+        sha256d_self_check_backend(SHA256D_BACKEND_X86_SHA_NI) != 0) {
+        return -1;
+    }
     return 0;
 }
 
@@ -163,9 +167,21 @@ static int parse_positive_int(const char *text, int fallback) {
     return (int)value;
 }
 
+static int configure_backend_from_env(sha256d_backend_t *backend) {
+    const char *text = getenv("BTC_MINER_SHA_BACKEND");
+    if (text == NULL || text[0] == '\0' || strcmp(text, "auto") == 0) {
+        return 0;
+    }
+    if (sha256d_parse_backend(text, backend) != 0) {
+        fprintf(stderr, "unknown BTC_MINER_SHA_BACKEND: %s\n", text);
+        return -1;
+    }
+    return 0;
+}
+
 static void usage(const char *argv0) {
     fprintf(stderr,
-            "Usage: %s [-t threads] [-s seconds] [--backend openssl|fast-c|arm-sha2] [--all] [--cpu-info] [--version]\n",
+            "Usage: %s [-t threads] [-s seconds] [--backend openssl|fast-c|arm-sha2|x86-sha-ni] [--all] [--cpu-info] [--version]\n",
             argv0);
 }
 
@@ -241,6 +257,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     backend = sha256d_auto_backend();
+    if (configure_backend_from_env(&backend) != 0) {
+        return 2;
+    }
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
@@ -281,7 +300,13 @@ int main(int argc, char **argv) {
             return rc;
         }
         if (sha256d_backend_available(SHA256D_BACKEND_ARM_SHA2)) {
-            return run_bench(threads, seconds, SHA256D_BACKEND_ARM_SHA2);
+            rc = run_bench(threads, seconds, SHA256D_BACKEND_ARM_SHA2);
+            if (rc != 0) {
+                return rc;
+            }
+        }
+        if (sha256d_backend_available(SHA256D_BACKEND_X86_SHA_NI)) {
+            return run_bench(threads, seconds, SHA256D_BACKEND_X86_SHA_NI);
         }
         return 0;
     }

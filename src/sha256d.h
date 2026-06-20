@@ -9,6 +9,7 @@ typedef enum {
     SHA256D_BACKEND_OPENSSL = 0,
     SHA256D_BACKEND_FAST_C = 1,
     SHA256D_BACKEND_ARM_SHA2 = 2,
+    SHA256D_BACKEND_X86_SHA_NI = 3,
 } sha256d_backend_t;
 
 typedef struct {

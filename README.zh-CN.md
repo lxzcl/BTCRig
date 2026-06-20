@@ -340,14 +340,21 @@ mining.suggest_difficulty = 0.001
 - 普通 C 实现
 - OpenSSL SHA256
 - ARMv8 SHA2 专用路径，编译器和 CPU 支持时启用
+- x86 SHA-NI 专用路径，编译器和 CPU 支持时启用
 
 可以用环境变量指定：
 
 ```bash
 BTC_MINER_SHA_BACKEND=auto ./build/btc_bench -t "$(nproc)" -s 10
 BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
-BTC_MINER_SHA_BACKEND=portable ./build/btc_bench -t "$(nproc)" -s 10
+BTC_MINER_SHA_BACKEND=fast-c ./build/btc_bench -t "$(nproc)" -s 10
+BTC_MINER_SHA_BACKEND=x86-sha-ni ./build/btc_bench -t "$(nproc)" -s 10
+BTC_MINER_SHA_BACKEND=arm-sha2 ./build/btc_bench -t "$(nproc)" -s 10
 ```
+
+在 x86 CPU 上，`auto` 会优先选择可用的 `x86-sha-ni`，否则回退到 OpenSSL。
+当前 x86 后端已经使用 SHA-NI 的 SHA256 轮函数和消息调度指令。
+AVX2 多路 nonce 批处理属于下一阶段优化。
 
 ## 配置文件
 
@@ -388,12 +395,13 @@ BTC_MINER_SHA_BACKEND=portable ./build/btc_bench -t "$(nproc)" -s 10
 - 从 `v0.1.0` 开始的统一 `VERSION` 版本控制。
 - GitHub Actions Windows UCRT64 构建和 zip 产物打包。
 - GitHub Actions 在 `master` 和手动发布运行中自动把 Windows zip 推送到 Releases。
+- x86 SHA-NI SHA256d 后端，并保留 OpenSSL 回退。
 
 ## 后续计划
 
-- Windows x86 SHA-NI / AVX2 多路并行 SHA256d 后端。
+- 在 SHA-NI 后端之上继续做 x86 AVX2 多路 nonce 批处理。
 - Linux 和 Termux 的 GitHub Actions 构建。
 - 使用 Git tag 的版本化 GitHub Release。
-- 增加 benchmark 模式，方便比较 OpenSSL、普通 C、ARM SHA2 和未来 x86 后端。
+- 增加 benchmark 模式，方便比较 OpenSSL、普通 C、ARM SHA2、x86 SHA-NI 和未来 AVX2 批处理。
 - 更完整的 Windows 和 Linux 发布包。
 - 增强重复 share、重连、矿池难度变化等挖矿稳定性诊断。

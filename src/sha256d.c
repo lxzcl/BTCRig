@@ -39,6 +39,13 @@ void sha256d_80_midstate_hash_words_arm_sha2(const sha256_midstate_t *state,
                                              uint32_t out_words[8]);
 #endif
 
+#if defined(BTC_MINER_X86_SHA_NI)
+int sha256d_x86_sha_ni_available(void);
+void sha256d_80_midstate_hash_tail_words_x86_sha_ni(const sha256_midstate_t *state,
+                                                    const uint32_t tail_words[4],
+                                                    uint32_t out_words[8]);
+#endif
+
 const char *sha256d_backend_name(sha256d_backend_t backend) {
     switch (backend) {
     case SHA256D_BACKEND_OPENSSL:
@@ -47,6 +54,8 @@ const char *sha256d_backend_name(sha256d_backend_t backend) {
         return "fast-c";
     case SHA256D_BACKEND_ARM_SHA2:
         return "arm-sha2";
+    case SHA256D_BACKEND_X86_SHA_NI:
+        return "x86-sha-ni";
     default:
         return "unknown";
     }
@@ -63,12 +72,21 @@ int sha256d_backend_available(sha256d_backend_t backend) {
 #else
         return 0;
 #endif
+    case SHA256D_BACKEND_X86_SHA_NI:
+#if defined(BTC_MINER_X86_SHA_NI)
+        return sha256d_x86_sha_ni_available();
+#else
+        return 0;
+#endif
     default:
         return 0;
     }
 }
 
 sha256d_backend_t sha256d_auto_backend(void) {
+    if (sha256d_backend_available(SHA256D_BACKEND_X86_SHA_NI)) {
+        return SHA256D_BACKEND_X86_SHA_NI;
+    }
     if (sha256d_backend_available(SHA256D_BACKEND_ARM_SHA2)) {
         return SHA256D_BACKEND_ARM_SHA2;
     }
@@ -95,7 +113,10 @@ int sha256d_parse_backend(const char *text, sha256d_backend_t *out) {
         *out = SHA256D_BACKEND_OPENSSL;
         return 0;
     }
-    if (strcmp(text, "fast-c") == 0 || strcmp(text, "fastc") == 0 || strcmp(text, "c") == 0) {
+    if (strcmp(text, "fast-c") == 0 ||
+        strcmp(text, "fastc") == 0 ||
+        strcmp(text, "portable") == 0 ||
+        strcmp(text, "c") == 0) {
         *out = SHA256D_BACKEND_FAST_C;
         return 0;
     }
@@ -104,6 +125,13 @@ int sha256d_parse_backend(const char *text, sha256d_backend_t *out) {
         strcmp(text, "sha2") == 0 ||
         strcmp(text, "neon") == 0) {
         *out = SHA256D_BACKEND_ARM_SHA2;
+        return 0;
+    }
+    if (strcmp(text, "x86-sha-ni") == 0 ||
+        strcmp(text, "x86-shani") == 0 ||
+        strcmp(text, "sha-ni") == 0 ||
+        strcmp(text, "shani") == 0) {
+        *out = SHA256D_BACKEND_X86_SHA_NI;
         return 0;
     }
     return -1;
@@ -291,6 +319,12 @@ sha256d_tail_words_func_t sha256d_tail_words_func(void) {
     case SHA256D_BACKEND_ARM_SHA2:
 #if defined(BTC_MINER_ARM_SHA2)
         return sha256d_80_midstate_hash_tail_words_arm_sha2;
+#else
+        return sha256d_80_midstate_hash_openssl;
+#endif
+    case SHA256D_BACKEND_X86_SHA_NI:
+#if defined(BTC_MINER_X86_SHA_NI)
+        return sha256d_80_midstate_hash_tail_words_x86_sha_ni;
 #else
         return sha256d_80_midstate_hash_openssl;
 #endif
