@@ -287,7 +287,7 @@ Network reconnects are continuous. The reconnect delay starts at `retry-pause` a
 
 BTCRig defaults to a transparent 1% developer donation, following XMRig's time-based model. For the default level, the miner works for the configured user for 99 minutes and then mines for the developer address for 1 minute. The first donation is randomized between 49.5 and 148.5 minutes of active user mining so clients do not all switch at once.
 
-Donation time starts only after the donation connection is authorized and has received a job. If that connection fails, BTCRig immediately returns to the configured user pool. The current mode, address, pool, and schedule are printed in the console. Set `"donate-level": 0` or use `--donate-level 0` to disable it.
+The donation session uses the currently selected user pool, including its URL, password, and suggested difficulty; only the wallet address changes. Donation time starts only after the connection is authorized and has received a job. If that connection fails, BTCRig immediately returns to user mining. The current mode, address, pool, and schedule are printed in the console. Set `"donate-level": 0` or use `--donate-level 0` to disable it.
 
 ## Interactive Keys
 

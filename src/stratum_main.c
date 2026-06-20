@@ -36,9 +36,7 @@
 #define DEFAULT_STATS_INTERVAL 5.0
 #define DEFAULT_DONATE_LEVEL 1
 #define DONATE_CYCLE_MINUTES 100
-#define DONATE_POOL_URL DEFAULT_POOL_URL
 #define DONATE_USER "bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3"
-#define DONATE_PASSWORD "x"
 
 static char stdout_buffer[1024 * 1024];
 static char stderr_buffer[64 * 1024];
@@ -496,8 +494,8 @@ int main(int argc, char **argv) {
         donation_initial_user_seconds(app_config.donate_level) : 0.0;
 
     if (donation_enabled) {
-        printf("%s[DONATE]%s level=%d%% address=%s pool=%s\n",
-               C_MAGENTA, C_RESET, app_config.donate_level, DONATE_USER, DONATE_POOL_URL);
+        printf("%s[DONATE]%s level=%d%% address=%s pool=same-as-user\n",
+               C_MAGENTA, C_RESET, app_config.donate_level, DONATE_USER);
         printf("%s[DONATE]%s first round scheduled after %.1f minutes of active user mining\n",
                C_MAGENTA, C_RESET, phase_seconds / 60.0);
     }
@@ -516,11 +514,8 @@ int main(int argc, char **argv) {
         pool_config_t donate_pool;
         pool_config_t *pool = &app_config.pools[pool_index];
         if (donating) {
-            memset(&donate_pool, 0, sizeof(donate_pool));
-            copy_string(donate_pool.url, sizeof(donate_pool.url), DONATE_POOL_URL);
+            donate_pool = *pool;
             copy_string(donate_pool.user, sizeof(donate_pool.user), DONATE_USER);
-            copy_string(donate_pool.pass, sizeof(donate_pool.pass), DONATE_PASSWORD);
-            donate_pool.difficulty = DEFAULT_SUGGEST_DIFFICULTY;
             pool = &donate_pool;
         }
 
