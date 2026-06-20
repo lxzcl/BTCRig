@@ -1,28 +1,49 @@
+<div align="center">
+
 # BTCRig
 
-[简体中文](README.zh-CN.md)
+**A compact Bitcoin SHA256d CPU miner, benchmark, and Stratum proxy.**
 
-BTCRig is an experimental Bitcoin SHA256d CPU miner and Stratum proxy for learning, testing, and low-power mining experiments.
+[简体中文](README.zh-CN.md) · [Releases](https://github.com/lxzcl/BTCRig/releases) · [Wiki](https://github.com/lxzcl/BTCRig/wiki)
 
-The project builds three programs:
+![Release](https://img.shields.io/github/v/release/lxzcl/BTCRig?style=for-the-badge&color=00b894)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Termux-00b894?style=for-the-badge)
+![SHA256d](https://img.shields.io/badge/SHA256d-CPU-00b894?style=for-the-badge)
+![Donation](https://img.shields.io/badge/default%20donation-0%25-00b894?style=for-the-badge)
 
-- `btc_stratum`: connects to a Stratum pool and mines with the CPU.
-- `btc_bench`: benchmarks local SHA256d performance.
-- `btc_proxy`: forwards Stratum traffic between miners and an upstream pool, with TCP and TLS support.
+</div>
 
-Default configuration:
+BTCRig is an experimental project for learning, benchmarking, and low-power solo-mining experiments. It is not intended to compete with ASIC miners.
 
-```text
-pool: stratum+tls://public-pool.io:4333
-user: bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
-pass: x
-suggest difficulty: 0.001
-agent: BTCRig/v0.1.4
+## Programs
+
+| Program | Purpose |
+| --- | --- |
+| `btc_stratum` | CPU miner with Stratum V1, TCP/TLS, reconnect, and interactive statistics |
+| `btc_bench` | Local SHA256d benchmark with selectable backends |
+| `btc_proxy` | Multi-client Stratum proxy with TCP/TLS auto-detection |
+
+## Highlights
+
+- Automatic backend selection: x86 SHA-NI, ARMv8 SHA2, OpenSSL, or portable C.
+- Two-lane interleaved x86 SHA-NI scanning and dedicated ARMv8 SHA2 range scanning.
+- Uses every logical CPU by default; thread count remains configurable.
+- Continuous network reconnect with bounded backoff.
+- Plain TCP and verified or compatible TLS pool connections.
+- Human-readable hashrate units and per-thread runtime statistics.
+- Default developer donation is **disabled (`0%`)**.
+
+## Quick Start
+
+### Download a release
+
+Windows packages are published on the [Releases page](https://github.com/lxzcl/BTCRig/releases). Extract the zip, edit `config.json`, then run:
+
+```powershell
+.\btc_stratum.exe
 ```
 
-Use `-u` or edit `config.json` to mine with your own wallet.
-
-## Ubuntu / Debian Auto Install
+### Ubuntu / Debian
 
 ```bash
 wget -O ubuntu.sh https://raw.githubusercontent.com/lxzcl/BTCRig/master/ubuntu.sh
@@ -30,56 +51,7 @@ chmod +x ubuntu.sh
 ./ubuntu.sh
 ```
 
-The script installs dependencies, downloads the source, builds BTCRig, and starts `btc_stratum`.
-
-Default install directory:
-
-```text
-~/BTCRig
-```
-
-Run again later:
-
-```bash
-cd ~/BTCRig
-./build/btc_stratum
-```
-
-## Ubuntu / Debian Manual Build
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake make pkg-config git \
-  libssl-dev libjansson-dev ca-certificates wget unzip
-
-git clone https://github.com/lxzcl/BTCRig.git
-cd BTCRig
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
-cmake --build build -j"$(nproc)"
-```
-
-Basic checks:
-
-```bash
-./build/btc_stratum --self-test
-./build/btc_stratum --cpu-info
-./build/btc_bench -t "$(nproc)" -s 10
-```
-
-Run:
-
-```bash
-./build/btc_stratum
-```
-
-Override pool or wallet:
-
-```bash
-./build/btc_stratum -o stratum+tls://public-pool.io:4333
-./build/btc_stratum -u bc1q_example_wallet.worker
-```
-
-## Termux Auto Install
+### Termux
 
 ```bash
 pkg update
@@ -89,183 +61,46 @@ chmod +x termux.sh
 ./termux.sh
 ```
 
-If Termux `cmake` cannot start because of a `jsoncpp` library mismatch, the script tries to repair it first. If that still fails, it falls back to a direct `clang` build.
-
-Manual repair:
+### Build from source
 
 ```bash
-pkg update
-pkg upgrade -y
-pkg reinstall -y cmake jsoncpp
-```
-
-## Termux Manual Build
-
-```bash
-pkg update
-pkg install -y clang make cmake jsoncpp git openssl openssl-tool pkg-config libjansson wget unzip
-
 git clone https://github.com/lxzcl/BTCRig.git
 cd BTCRig
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
 cmake --build build -j"$(nproc)"
+./build/btc_stratum --self-test
 ./build/btc_stratum
 ```
 
-## Windows / MSYS2 UCRT64 Build
+Platform-specific dependencies, Windows DLL packaging, and CI details are kept in the [Build and Releases wiki page](https://github.com/lxzcl/BTCRig/wiki/Build-and-Releases).
 
-Open the MSYS2 UCRT64 terminal. Do not use the plain MSYS, MINGW64, or Windows PowerShell environment for this build.
+## Performance Snapshots
 
-Check the environment:
+These are observed project measurements, not controlled cross-platform benchmarks. Compiler versions, clock limits, cooling, and background load can materially change the result.
+
+| Platform | Environment | Backend | Threads | Observed SHA256d |
+| --- | --- | --- | ---: | ---: |
+| Snapdragon 8 Elite | Termux | ARMv8 SHA2 | 8 | ~150 MH/s |
+| NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~34.4 MH/s |
+| NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~12.3 MH/s |
+| RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | ~6 MH/s |
+
+Run the same local benchmark when comparing builds:
 
 ```bash
-echo $MSYSTEM
+./build/btc_bench -t "$(nproc)" -s 10
 ```
 
-Expected output:
+## Runtime
+
+The miner reports every usable SHA backend and the selected path at startup:
 
 ```text
-UCRT64
+[SHA] available=x86-sha-ni,openssl,fast-c
+[SHA] selected=x86-sha-ni mode=auto
 ```
 
-Install dependencies:
-
-```bash
-pacman -Syu
-pacman -S --needed \
-  mingw-w64-ucrt-x86_64-gcc \
-  mingw-w64-ucrt-x86_64-cmake \
-  mingw-w64-ucrt-x86_64-openssl \
-  mingw-w64-ucrt-x86_64-jansson \
-  mingw-w64-ucrt-x86_64-pkgconf \
-  mingw-w64-ucrt-x86_64-ninja \
-  git make
-```
-
-Build:
-
-```bash
-git clone https://github.com/lxzcl/BTCRig.git
-cd BTCRig
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
-cmake --build build -j$(nproc)
-```
-
-Generated files:
-
-```text
-build/btc_stratum.exe
-build/btc_proxy.exe
-build/btc_bench.exe
-```
-
-Test:
-
-```bash
-./build/btc_stratum.exe --self-test
-./build/btc_stratum.exe --cpu-info
-./build/btc_bench.exe -t 1 -s 1
-```
-
-## Windows DLL Packaging
-
-Package only the miner:
-
-```bash
-rm -rf dist
-mkdir -p dist
-cp build/btc_stratum.exe config.json dist/
-
-ldd build/btc_stratum.exe \
-  | awk '{for (i=1; i<=NF; i++) if ($i ~ /^\/ucrt64\/bin\//) print $i}' \
-  | sort -u \
-  | xargs -r -I{} cp -u "{}" dist/
-```
-
-Package all executables:
-
-```bash
-rm -rf dist
-mkdir -p dist
-cp build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe config.json proxy.json dist/
-
-ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
-  | awk '{for (i=1; i<=NF; i++) if ($i ~ /^\/ucrt64\/bin\//) print $i}' \
-  | sort -u \
-  | xargs -r -I{} cp -u "{}" dist/
-```
-
-Copy the whole `dist/` directory to another Windows machine.
-
-## GitHub Actions Windows Build
-
-The repository includes a Windows UCRT64 workflow at `.github/workflows/main.yml`.
-
-It runs in two cases:
-
-- Manual run through GitHub Actions `workflow_dispatch`.
-- Code changes pushed to `master` or `dev` that touch source, CMake, config, version, or the workflow file.
-
-The workflow builds all three programs and creates this zip package:
-
-```text
-BTCRig-v0.1.4-windows-ucrt64.zip
-```
-
-The zip contains:
-
-```text
-btc_stratum.exe
-btc_proxy.exe
-btc_bench.exe
-config.json
-proxy.json
-required DLL files
-README files
-LICENSE
-VERSION
-```
-
-Release behavior:
-
-- Pushes to `dev` build and keep the package as a GitHub Actions artifact.
-- Pushes to `master` build and publish the zip directly to [GitHub Releases](https://github.com/lxzcl/BTCRig/releases).
-- Manual workflow runs can also publish to Releases through the `publish_release` input.
-
-## Versioning
-
-BTCRig uses a single `VERSION` file as the project version source. The current development version is:
-
-```text
-0.1.4
-```
-
-CMake reads this file and generates the runtime version macros. The miner reports the Stratum user agent as:
-
-```text
-BTCRig/v0.1.4
-```
-
-Useful commands:
-
-```bash
-./build/btc_stratum --version
-./build/btc_proxy --version
-./build/btc_bench --version
-```
-
-Recommended release flow:
-
-```bash
-git switch dev
-# develop and test
-git switch master
-git merge --ff-only dev
-git tag -a v0.1.4 -m "BTCRig v0.1.4"
-git push origin master v0.1.4
-```
-
-## Common Options
+Common commands:
 
 ```text
 -o, --url URL              pool URL
@@ -273,107 +108,27 @@ git push origin master v0.1.4
 -p, --pass PASS            password
 -d, --suggest-diff N       suggested initial difficulty
 -t, --threads N            CPU thread count, 0 means auto
---stats N                  print stats every N seconds
---runtime N                run for N seconds, 0 means unlimited
---donate-level N           donation percentage, minimum and default 1
+--stats N                  statistics interval in seconds
+--runtime N                runtime limit, 0 means unlimited
+--donate-level N           donation percentage, default 0
 --no-mine                  test the connection without mining
---cpu-info                 print CPU information
---self-test                run Stratum parser self-test
+--cpu-info                 print CPU topology
+--self-test                run the Stratum parser self-test
 ```
 
-Network reconnects are continuous. The reconnect delay starts at `retry-pause` and backs off up to 60 seconds.
+Interactive keys while mining:
 
-## Developer Donation
-
-BTCRig defaults to a transparent 1% time-based developer donation. For the default level, the miner works for the configured user for 99 minutes and then mines for the developer address for 1 minute. The first donation is randomized between 49.5 and 148.5 minutes of active user mining so clients do not all switch at once.
-
-The donation session uses the currently selected user pool, including its URL, password, and suggested difficulty; only the wallet address changes. Donation time starts only after the connection is authorized and has received a job. If that connection fails, BTCRig immediately returns to user mining. The current mode, address, pool, and schedule are printed in the console.
-
-The distributed binary has a compile-time minimum donation level of 1%. Setting `"donate-level": 0` or using `--donate-level 0` is ignored. To build a donation-free binary, change `DONATION_MINIMUM_LEVEL` in `src/donation.h` from `1` to `0`, rebuild BTCRig, and then set `"donate-level": 0`.
-
-## Interactive Keys
-
-During mining:
-
-```text
-h  per-thread hashrate
-p  pause mining
-r  resume mining
-s  submit statistics
-c  connection information
-```
-
-## Stratum Proxy
-
-Run:
-
-```bash
-./build/btc_proxy
-```
-
-Default listener:
-
-```text
-listen: 0.0.0.0:4333
-mode: auto
-upstream: stratum+tls://public-pool.io:4333
-```
-
-`auto` mode detects plain TCP and TLS clients on the same port. Each client gets an independent upstream pool connection.
-
-If no certificate is configured, the proxy generates a self-signed certificate in the current working directory:
-
-```text
-cert.pem
-cert_key.pem
-```
-
-See [PROXY.md](PROXY.md) for details.
-
-## Difficulty
-
-BTCRig sends this suggested difficulty by default:
-
-```text
-mining.suggest_difficulty = 0.001
-```
-
-This is only a suggestion. The actual share difficulty is controlled by the pool through `mining.set_difficulty`, and it takes effect from the next `mining.notify` job.
-
-## SHA Backend
-
-BTCRig selects a SHA256d backend automatically:
-
-- portable C implementation
-- OpenSSL SHA256
-- ARMv8 SHA2 path, when both compiler and CPU support it
-- x86 SHA-NI path, when both compiler and CPU support it
-
-You can override the backend:
-
-```bash
-BTC_MINER_SHA_BACKEND=auto ./build/btc_bench -t "$(nproc)" -s 10
-BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
-BTC_MINER_SHA_BACKEND=fast-c ./build/btc_bench -t "$(nproc)" -s 10
-BTC_MINER_SHA_BACKEND=x86-sha-ni ./build/btc_bench -t "$(nproc)" -s 10
-BTC_MINER_SHA_BACKEND=arm-sha2 ./build/btc_bench -t "$(nproc)" -s 10
-```
-
-On x86 CPUs, `auto` prefers `x86-sha-ni` when available and falls back to OpenSSL otherwise.
-The x86 backend uses SHA-NI for the SHA256 round and message-schedule instructions, with two interleaved nonce lanes to improve instruction-level parallelism.
-
-At startup, `btc_stratum` prints the backends available in the current build and the selected backend:
-
-```text
-[SHA] available=x86-sha-ni,openssl,fast-c
-[SHA] selected=x86-sha-ni mode=auto
-```
+| Key | Action |
+| --- | --- |
+| `h` | Per-thread hashrate |
+| `p` | Pause mining |
+| `r` | Resume mining |
+| `s` | Share results |
+| `c` | Connection information |
 
 ## Configuration
 
-`btc_stratum` loads `config.json` from the current directory by default.
-
-Minimal example:
+`btc_stratum` reads `config.json` from the current directory. Replace the example wallet before mining for yourself.
 
 ```json
 {
@@ -384,39 +139,43 @@ Minimal example:
   "pools": [
     {
       "url": "stratum+tls://public-pool.io:4333",
-      "user": "bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3",
+      "user": "bc1q_example_wallet.worker",
       "pass": "x",
       "diff": 0.001
     }
   ],
   "retries": -1,
   "retry-pause": 2,
-  "donate-level": 1,
+  "donate-level": 0,
   "print-time": 10,
   "runtime": 0
 }
 ```
 
-## Completed Work
+The pool controls the effective share difficulty through `mining.set_difficulty`; `diff` is only an initial suggestion.
 
-- CPU SHA256d Stratum miner with TCP and TLS pool support.
-- Config file support with sensible defaults.
-- Infinite reconnect with bounded retry backoff.
-- Interactive runtime keys for hashrate, pause, resume, results, and connection status.
-- Benchmark tool with selectable SHA backend.
-- Transparent Stratum proxy with auto TCP/TLS client detection.
-- Automatic self-signed proxy certificate generation.
-- Windows, Ubuntu/Debian, and Termux build documentation.
-- English default docs with Chinese translations.
-- Unified `VERSION`-based project versioning starting at `v0.1.0`.
-- GitHub Actions Windows UCRT64 build and zip artifact packaging.
-- GitHub Actions release publishing for Windows zip packages on `master` and manual release runs.
-- x86 SHA-NI SHA256d backend with two-lane interleaved nonce scanning and OpenSSL fallback.
-- Transparent time-based developer donation, defaulting to 1%.
+## Backends
 
-## Roadmap
+| Backend | Availability | Notes |
+| --- | --- | --- |
+| `x86-sha-ni` | x86 CPU with SHA extensions | Preferred x86 path, two interleaved nonce lanes |
+| `arm-sha2` | ARMv8 CPU with SHA2 extensions | Dedicated ARM range scanner |
+| `openssl` | All supported builds | Library fallback |
+| `fast-c` | All supported builds | Portable C fallback |
 
-- Linux and Termux GitHub Actions builds.
-- More benchmark reporting for comparing OpenSSL, portable C, ARM SHA2, and x86 SHA-NI.
-- Cleaner release packaging for Windows and Linux.
-- Additional mining stability diagnostics for duplicate shares, reconnects, and pool difficulty changes.
+Override automatic selection with `BTC_MINER_SHA_BACKEND`, for example:
+
+```bash
+BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
+```
+
+## Documentation
+
+- [Build and Releases](https://github.com/lxzcl/BTCRig/wiki/Build-and-Releases)
+- [Proxy guide](PROXY.md)
+- [Chinese README](README.zh-CN.md)
+- [Release downloads](https://github.com/lxzcl/BTCRig/releases)
+
+## License
+
+BTCRig is distributed under the [GNU General Public License v3.0](LICENSE).

@@ -150,7 +150,7 @@ build_with_clang() {
     echo "Building btc_stratum with clang..."
     cc ${common_flags} ${tune_flags} ${sha_defs} -O3 -Isrc \
         ${openssl_cflags} ${jansson_cflags} \
-        src/stratum_main.c src/stratum.c src/console.c src/cpu_info.c src/miner.c ${sha_sources} \
+        src/stratum_main.c src/stratum.c src/console.c src/cpu_info.c src/donation.c src/miner.c ${sha_sources} \
         -o build/btc_stratum \
         ${openssl_libs} ${jansson_libs} -pthread
 

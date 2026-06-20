@@ -339,7 +339,9 @@ static void usage(const char *argv0) {
     printf("  reconnect-delay: %d..%d seconds\n", DEFAULT_RECONNECT_DELAY, MAX_RECONNECT_DELAY);
     printf("  stats: %.1f seconds\n", DEFAULT_STATS_INTERVAL);
     printf("  threads: auto (%d recommended)\n", default_thread_count());
-    printf("  donate-level: %d%% (1 minute in 100 minutes)\n", DONATION_DEFAULT_LEVEL);
+    printf("  donate-level: %d%% (%s)\n",
+           DONATION_DEFAULT_LEVEL,
+           DONATION_DEFAULT_LEVEL == 0 ? "disabled" : "minutes per 100 minutes");
     printf("\nNotes:\n");
     printf("  TLS and plain TCP are supported: stratum+tls://host:port or stratum+tcp://host:port.\n");
     printf("  stratum+tls:// verifies trusted certificates first, then accepts self-signed TLS if needed.\n");
