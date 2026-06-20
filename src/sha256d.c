@@ -44,6 +44,13 @@ int sha256d_x86_sha_ni_available(void);
 void sha256d_80_midstate_hash_tail_words_x86_sha_ni(const sha256_midstate_t *state,
                                                     const uint32_t tail_words[4],
                                                     uint32_t out_words[8]);
+void sha256d_scan_nonce_range_x86_sha_ni(const sha256_midstate_t *state,
+                                         const uint32_t tail_words[4],
+                                         const uint32_t target_words[8],
+                                         uint32_t start_nonce,
+                                         uint32_t nonce_count,
+                                         void *opaque,
+                                         sha256d_scan_match_func_t on_match);
 #endif
 
 const char *sha256d_backend_name(sha256d_backend_t backend) {
@@ -139,6 +146,17 @@ int sha256d_parse_backend(const char *text, sha256d_backend_t *out) {
 
 static uint32_t rotr32(uint32_t x, unsigned int n) {
     return (x >> n) | (x << (32U - n));
+}
+
+static uint32_t bswap32(uint32_t v) {
+#if defined(__GNUC__)
+    return __builtin_bswap32(v);
+#else
+    return ((v & 0x000000ffU) << 24) |
+           ((v & 0x0000ff00U) << 8) |
+           ((v & 0x00ff0000U) >> 8) |
+           ((v & 0xff000000U) >> 24);
+#endif
 }
 
 static uint32_t load_be32(const uint8_t *p) {
@@ -312,6 +330,42 @@ void sha256d_words_to_hash(const uint32_t words[8], uint8_t out[32]) {
     }
 }
 
+static int hash_words_meet_target(const uint32_t hash_words[8], const uint32_t target_words[8]) {
+    for (int i = 7; i >= 0; --i) {
+        uint32_t h = bswap32(hash_words[i]);
+        uint32_t t = target_words[i];
+        if (h < t) {
+            return 1;
+        }
+        if (h > t) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void sha256d_scan_nonce_range_generic(const sha256_midstate_t *state,
+                                             const uint32_t base_tail_words[4],
+                                             const uint32_t target_words[8],
+                                             uint32_t start_nonce,
+                                             uint32_t nonce_count,
+                                             void *opaque,
+                                             sha256d_scan_match_func_t on_match) {
+    uint32_t tail_words[4];
+    uint32_t hash_words[8];
+    sha256d_tail_words_func_t hash_tail_words = sha256d_tail_words_func();
+
+    memcpy(tail_words, base_tail_words, sizeof(tail_words));
+    for (uint32_t i = 0; i < nonce_count; ++i) {
+        uint32_t nonce = start_nonce + i;
+        tail_words[3] = bswap32(nonce);
+        hash_tail_words(state, tail_words, hash_words);
+        if (hash_words_meet_target(hash_words, target_words) && on_match != NULL) {
+            on_match(opaque, nonce, hash_words);
+        }
+    }
+}
+
 sha256d_tail_words_func_t sha256d_tail_words_func(void) {
     switch (g_backend) {
     case SHA256D_BACKEND_FAST_C:
@@ -331,6 +385,22 @@ sha256d_tail_words_func_t sha256d_tail_words_func(void) {
     case SHA256D_BACKEND_OPENSSL:
     default:
         return sha256d_80_midstate_hash_openssl;
+    }
+}
+
+sha256d_nonce_range_func_t sha256d_nonce_range_func(void) {
+    switch (g_backend) {
+    case SHA256D_BACKEND_X86_SHA_NI:
+#if defined(BTC_MINER_X86_SHA_NI)
+        return sha256d_scan_nonce_range_x86_sha_ni;
+#else
+        return sha256d_scan_nonce_range_generic;
+#endif
+    case SHA256D_BACKEND_OPENSSL:
+    case SHA256D_BACKEND_FAST_C:
+    case SHA256D_BACKEND_ARM_SHA2:
+    default:
+        return sha256d_scan_nonce_range_generic;
     }
 }
 

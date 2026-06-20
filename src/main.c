@@ -24,6 +24,13 @@ typedef struct {
     uint8_t sink;
 } worker_arg_t;
 
+typedef struct {
+    uint8_t header[80];
+    uint32_t expected_nonce;
+    size_t seen;
+    int failed;
+} range_self_check_t;
+
 static double monotonic_seconds(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -50,17 +57,6 @@ static uint32_t load_be32(const uint8_t *p) {
 #endif
 }
 
-static uint32_t bswap32(uint32_t v) {
-#if defined(__GNUC__)
-    return __builtin_bswap32(v);
-#else
-    return ((v & 0x000000ffU) << 24) |
-           ((v & 0x0000ff00U) << 8) |
-           ((v & 0x00ff0000U) >> 8) |
-           ((v & 0xff000000U) >> 24);
-#endif
-}
-
 static void make_test_header(uint8_t header[80]) {
     memset(header, 0, 80);
 
@@ -71,12 +67,44 @@ static void make_test_header(uint8_t header[80]) {
     header[71] = 0x1d;
 }
 
+static void range_self_check_match(void *opaque, uint32_t nonce, const uint32_t hash_words[8]) {
+    range_self_check_t *ctx = (range_self_check_t *)opaque;
+    uint8_t full[32];
+    uint8_t mid[32];
+
+    if (ctx == NULL) {
+        return;
+    }
+    if (nonce != ctx->expected_nonce + (uint32_t)ctx->seen) {
+        ctx->failed = 1;
+        return;
+    }
+
+    store_le32(&ctx->header[76], nonce);
+    sha256d_80(ctx->header, full);
+    sha256d_words_to_hash(hash_words, mid);
+    if (memcmp(full, mid, sizeof(full)) != 0) {
+        ctx->failed = 1;
+        return;
+    }
+    ++ctx->seen;
+}
+
+static void bench_scan_match(void *opaque, uint32_t nonce, const uint32_t hash_words[8]) {
+    uint8_t *sink = (uint8_t *)opaque;
+    if (sink != NULL) {
+        *sink ^= (uint8_t)(hash_words[0] ^ nonce);
+    }
+}
+
 static int sha256d_self_check_backend(sha256d_backend_t backend) {
     const uint32_t nonces[] = {0, 1, 0x13579bdfU, 0xffffffffU};
     uint8_t header[80];
     uint8_t full[32];
     uint8_t mid[32];
     sha256_midstate_t midstate;
+    uint32_t tail_words[4];
+    uint32_t target_words[8];
 
     if (sha256d_set_backend(backend) != 0) {
         return -1;
@@ -95,6 +123,27 @@ static int sha256d_self_check_backend(sha256d_backend_t backend) {
                     nonces[i]);
             return -1;
         }
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        tail_words[i] = load_be32(header + 64 + i * 4);
+    }
+    for (int i = 0; i < 8; ++i) {
+        target_words[i] = 0xffffffffU;
+    }
+
+    range_self_check_t range_check;
+    memset(&range_check, 0, sizeof(range_check));
+    memcpy(range_check.header, header, sizeof(range_check.header));
+    range_check.expected_nonce = 0;
+    sha256d_nonce_range_func()(&midstate, tail_words, target_words, 0, 4,
+                               &range_check, range_self_check_match);
+    if (range_check.failed || range_check.seen != 4) {
+        fprintf(stderr,
+                "sha256d range self-check failed backend=%s seen=%zu\n",
+                sha256d_backend_name(backend),
+                range_check.seen);
+        return -1;
     }
 
     return 0;
@@ -121,17 +170,17 @@ static int sha256d_self_check(void) {
 static void *worker_main(void *opaque) {
     worker_arg_t *arg = (worker_arg_t *)opaque;
     uint8_t header[80];
-    uint32_t hash_words[8];
     uint32_t tail_words[4];
+    uint32_t target_words[8] = {0};
     sha256_midstate_t midstate;
-    uint32_t nonce = (uint32_t)arg->id;
+    uint32_t nonce = (uint32_t)arg->id * 4096U;
     uint64_t hashes = 0;
     uint8_t sink = 0;
     const double deadline = monotonic_seconds() + (double)arg->seconds;
-    sha256d_tail_words_func_t hash_tail_words = NULL;
+    sha256d_nonce_range_func_t scan_nonce_range = NULL;
 
     (void)sha256d_set_backend(arg->backend);
-    hash_tail_words = sha256d_tail_words_func();
+    scan_nonce_range = sha256d_nonce_range_func();
     make_test_header(header);
     sha256d_80_midstate_prepare(&midstate, header);
     for (int i = 0; i < 4; ++i) {
@@ -139,12 +188,9 @@ static void *worker_main(void *opaque) {
     }
 
     while (monotonic_seconds() < deadline) {
-        for (int i = 0; i < 4096; ++i) {
-            tail_words[3] = bswap32(nonce);
-            hash_tail_words(&midstate, tail_words, hash_words);
-            sink ^= (uint8_t)hash_words[0];
-            nonce += (uint32_t)arg->thread_count;
-        }
+        scan_nonce_range(&midstate, tail_words, target_words, nonce, 4096, &sink, bench_scan_match);
+        sink ^= (uint8_t)nonce;
+        nonce += 4096U * (uint32_t)arg->thread_count;
         hashes += 4096;
     }
 

@@ -157,17 +157,6 @@ static uint32_t load_be32(const uint8_t *p) {
 #endif
 }
 
-static uint32_t bswap32(uint32_t v) {
-#if defined(__GNUC__)
-    return __builtin_bswap32(v);
-#else
-    return ((v & 0x000000ffU) << 24) |
-           ((v & 0x0000ff00U) << 8) |
-           ((v & 0x00ff0000U) >> 8) |
-           ((v & 0xff000000U) >> 24);
-#endif
-}
-
 static int hex_u32_to_le(const char *hex, uint8_t out[4]) {
     uint8_t tmp[4];
     if (hex_to_bytes(hex, tmp, sizeof(tmp)) != 0) {
@@ -241,20 +230,6 @@ int miner_hash_meets_target(const uint8_t hash[32], const uint8_t target[32]) {
             return 1;
         }
         if (hash[i] > target[i]) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int hash_words_meet_target(const uint32_t hash_words[8], const uint32_t target_words[8]) {
-    for (int i = 7; i >= 0; --i) {
-        uint32_t h = bswap32(hash_words[i]);
-        uint32_t t = target_words[i];
-        if (h < t) {
-            return 1;
-        }
-        if (h > t) {
             return 0;
         }
     }
@@ -407,14 +382,32 @@ static int copy_job_and_nonce_range(miner_t *miner,
     return ok;
 }
 
+typedef struct {
+    miner_t *miner;
+    const active_job_t *job;
+} scan_match_context_t;
+
+static void queue_scan_match(void *opaque, uint32_t nonce, const uint32_t hash_words[8]) {
+    scan_match_context_t *ctx = (scan_match_context_t *)opaque;
+    uint8_t hash[32];
+
+    if (ctx == NULL || ctx->miner == NULL || ctx->job == NULL) {
+        return;
+    }
+
+    sha256d_words_to_hash(hash_words, hash);
+    pthread_mutex_lock(&ctx->miner->lock);
+    if (ctx->miner->job.valid && ctx->miner->job.public_job.seq == ctx->job->public_job.seq) {
+        queue_share_locked(ctx->miner, &ctx->job->public_job, nonce, hash);
+    }
+    pthread_mutex_unlock(&ctx->miner->lock);
+}
+
 static void *worker_main(void *opaque) {
     worker_arg_t *arg = (worker_arg_t *)opaque;
     miner_t *miner = arg->miner;
     int id = arg->id;
-    uint8_t hash[32];
-    uint32_t tail_words[4];
-    uint32_t hash_words[8];
-    sha256d_tail_words_func_t hash_tail_words = sha256d_tail_words_func();
+    sha256d_nonce_range_func_t scan_nonce_range = sha256d_nonce_range_func();
 
     free(arg);
 
@@ -439,23 +432,14 @@ static void *worker_main(void *opaque) {
             continue;
         }
 
-        memcpy(tail_words, job.tail_words, sizeof(tail_words));
+        scan_match_context_t scan_context = {
+            .miner = miner,
+            .job = &job,
+        };
         uint64_t local_hashes = 0;
-        for (uint32_t i = 0; i < nonce_count; ++i) {
-            uint32_t nonce = start_nonce + i;
-            tail_words[3] = bswap32(nonce);
-            hash_tail_words(&job.midstate, tail_words, hash_words);
-            ++local_hashes;
-
-            if (hash_words_meet_target(hash_words, job.target_words)) {
-                sha256d_words_to_hash(hash_words, hash);
-                pthread_mutex_lock(&miner->lock);
-                if (miner->job.valid && miner->job.public_job.seq == job.public_job.seq) {
-                    queue_share_locked(miner, &job.public_job, nonce, hash);
-                }
-                pthread_mutex_unlock(&miner->lock);
-            }
-        }
+        scan_nonce_range(&job.midstate, job.tail_words, job.target_words,
+                         start_nonce, nonce_count, &scan_context, queue_scan_match);
+        local_hashes += nonce_count;
 
         pthread_mutex_lock(&miner->lock);
         miner->hashes += local_hashes;
