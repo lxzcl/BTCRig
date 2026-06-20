@@ -37,6 +37,13 @@ void sha256d_80_midstate_hash_tail_words_arm_sha2(const sha256_midstate_t *state
 void sha256d_80_midstate_hash_words_arm_sha2(const sha256_midstate_t *state,
                                              const uint8_t header_tail16[16],
                                              uint32_t out_words[8]);
+void sha256d_scan_nonce_range_arm_sha2(const sha256_midstate_t *state,
+                                       const uint32_t tail_words[4],
+                                       const uint32_t target_words[8],
+                                       uint32_t start_nonce,
+                                       uint32_t nonce_count,
+                                       void *opaque,
+                                       sha256d_scan_match_func_t on_match);
 #endif
 
 #if defined(BTC_MINER_X86_SHA_NI)
@@ -396,9 +403,14 @@ sha256d_nonce_range_func_t sha256d_nonce_range_func(void) {
 #else
         return sha256d_scan_nonce_range_generic;
 #endif
+    case SHA256D_BACKEND_ARM_SHA2:
+#if defined(BTC_MINER_ARM_SHA2)
+        return sha256d_scan_nonce_range_arm_sha2;
+#else
+        return sha256d_scan_nonce_range_generic;
+#endif
     case SHA256D_BACKEND_OPENSSL:
     case SHA256D_BACKEND_FAST_C:
-    case SHA256D_BACKEND_ARM_SHA2:
     default:
         return sha256d_scan_nonce_range_generic;
     }

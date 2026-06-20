@@ -77,6 +77,31 @@ BTC_ARM_ALWAYS_INLINE uint32_t load_be32(const uint8_t *p) {
 #endif
 }
 
+BTC_ARM_ALWAYS_INLINE uint32_t bswap32(uint32_t v) {
+#if defined(__GNUC__)
+    return __builtin_bswap32(v);
+#else
+    return ((v & 0x000000ffU) << 24) |
+           ((v & 0x0000ff00U) << 8) |
+           ((v & 0x00ff0000U) >> 8) |
+           ((v & 0xff000000U) >> 24);
+#endif
+}
+
+BTC_ARM_ALWAYS_INLINE int hash_words_meet_target(const uint32_t hash_words[8], const uint32_t target_words[8]) {
+    for (int i = 7; i >= 0; --i) {
+        uint32_t h = bswap32(hash_words[i]);
+        uint32_t t = target_words[i];
+        if (h < t) {
+            return 1;
+        }
+        if (h > t) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int sha256d_arm_sha2_available(void) {
 #if defined(__linux__) && defined(AT_HWCAP) && defined(HWCAP_SHA2)
     return (getauxval(AT_HWCAP) & (unsigned long)HWCAP_SHA2) != 0;
@@ -249,9 +274,9 @@ BTC_ARM_ALWAYS_INLINE void sha256_arm_compress_second_hash(uint32x4_t sched0,
     *out_efgh = vaddq_u32(efgh, efgh_orig);
 }
 
-void sha256d_80_midstate_hash_tail_words_arm_sha2(const sha256_midstate_t *state,
-                                                  const uint32_t tail_words[4],
-                                                  uint32_t out_words[8]) {
+BTC_ARM_ALWAYS_INLINE void sha256d_hash_tail_words_arm_raw(const sha256_midstate_t *state,
+                                                           const uint32_t tail_words[4],
+                                                           uint32_t out_words[8]) {
     uint32x4_t first_abcd = vld1q_u32(&state->fast_state[0]);
     uint32x4_t first_efgh = vld1q_u32(&state->fast_state[4]);
     uint32x4_t second_abcd;
@@ -272,6 +297,55 @@ void sha256d_80_midstate_hash_tail_words_arm_sha2(const sha256_midstate_t *state
 
     vst1q_u32(&out_words[0], second_abcd);
     vst1q_u32(&out_words[4], second_efgh);
+}
+
+void sha256d_80_midstate_hash_tail_words_arm_sha2(const sha256_midstate_t *state,
+                                                  const uint32_t tail_words[4],
+                                                  uint32_t out_words[8]) {
+    sha256d_hash_tail_words_arm_raw(state, tail_words, out_words);
+}
+
+void sha256d_scan_nonce_range_arm_sha2(const sha256_midstate_t *state,
+                                       const uint32_t base_tail_words[4],
+                                       const uint32_t target_words[8],
+                                       uint32_t start_nonce,
+                                       uint32_t nonce_count,
+                                       void *opaque,
+                                       sha256d_scan_match_func_t on_match) {
+    const uint32x4_t start_abcd = vld1q_u32(&state->fast_state[0]);
+    const uint32x4_t start_efgh = vld1q_u32(&state->fast_state[4]);
+    const uint32_t tail0 = base_tail_words[0];
+    const uint32_t tail1 = base_tail_words[1];
+    const uint32_t tail2 = base_tail_words[2];
+    uint32_t hash_words[8];
+
+    for (uint32_t i = 0; i < nonce_count; ++i) {
+        uint32_t nonce = start_nonce + i;
+        uint32x4_t first_abcd;
+        uint32x4_t first_efgh;
+        uint32x4_t second_abcd;
+        uint32x4_t second_efgh;
+
+        sha256_arm_compress_btc_tail(
+            start_abcd,
+            start_efgh,
+            make_u32x4(tail0, tail1, tail2, bswap32(nonce)),
+            &first_abcd,
+            &first_efgh);
+
+        sha256_arm_compress_second_hash(
+            first_abcd,
+            first_efgh,
+            &second_abcd,
+            &second_efgh);
+
+        vst1q_u32(&hash_words[0], second_abcd);
+        vst1q_u32(&hash_words[4], second_efgh);
+
+        if (hash_words_meet_target(hash_words, target_words) && on_match != NULL) {
+            on_match(opaque, nonce, hash_words);
+        }
+    }
 }
 
 void sha256d_80_midstate_hash_words_arm_sha2(const sha256_midstate_t *state,
