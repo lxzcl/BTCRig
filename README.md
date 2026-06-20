@@ -13,7 +13,7 @@
 
 </div>
 
-BTCRig turns otherwise idle CPU capacity across Windows, Linux, Android/Termux, x86 PCs, and ARM boards into a shared platform for SHA256d learning, benchmarking, and low-power solo-mining experiments. It is not intended to compete with ASIC miners.
+BTCRig turns idle CPU resources on Windows, Linux, Android/Termux, x86 PCs, and ARM boards into usable compute power. The project is intended for SHA256d learning, benchmarking, and low-power solo-mining experiments, not for competing with ASIC miners.
 
 ## Programs
 
@@ -73,7 +73,47 @@ cmake --build build -j"$(nproc)"
 ./build/btc_stratum
 ```
 
-Platform-specific dependencies, Windows DLL packaging, and CI details are kept in the [Build and Releases wiki page](https://github.com/lxzcl/BTCRig/wiki/Build-and-Releases).
+### Windows / MSYS2 UCRT64 build
+
+Open the **MSYS2 UCRT64** terminal and run `echo $MSYSTEM`; the output must be `UCRT64`. Install the dependencies:
+
+```bash
+pacman -Syu
+pacman -S --needed \
+  mingw-w64-ucrt-x86_64-gcc \
+  mingw-w64-ucrt-x86_64-cmake \
+  mingw-w64-ucrt-x86_64-openssl \
+  mingw-w64-ucrt-x86_64-jansson \
+  mingw-w64-ucrt-x86_64-pkgconf \
+  git make
+```
+
+If `pacman -Syu` asks you to close the terminal, reopen the UCRT64 terminal before continuing. Build and test all three programs:
+
+```bash
+git clone https://github.com/lxzcl/BTCRig.git
+cd BTCRig
+cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+cmake --build build -j"$(nproc)"
+./build/btc_stratum.exe --self-test
+./build/btc_proxy.exe --version
+./build/btc_bench.exe -t 1 -s 1
+```
+
+Package the executables, configuration files, and required DLLs:
+
+```bash
+rm -rf dist
+mkdir -p dist
+cp build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe config.json proxy.json dist/
+
+ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
+  | awk '{for (i=1; i<=NF; i++) if ($i ~ /^\/ucrt64\/bin\//) print $i}' \
+  | sort -u \
+  | xargs -r -I{} cp -u "{}" dist/
+```
+
+Copy the complete `dist/` directory when running BTCRig on another Windows machine.
 
 ## Performance Snapshots
 

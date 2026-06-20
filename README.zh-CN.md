@@ -13,7 +13,7 @@
 
 </div>
 
-BTCRig 面向 Windows、Linux、Android/Termux、x86 电脑和 ARM 开发板等多平台闲置设备，把分散且长期空闲的 CPU 算力用于 SHA256d 学习、性能测试和低功耗 solo 挖矿实验，目标不是与 ASIC 矿机竞争。
+BTCRig 将 Windows、Linux、Android/Termux、x86 PC 和 ARM 开发板上的闲置 CPU 资源转化为算力。项目用于 SHA256d 学习、性能测试和低功耗 solo 挖矿实验，目标不是与 ASIC 矿机竞争。
 
 ## 程序组成
 
@@ -73,7 +73,47 @@ cmake --build build -j"$(nproc)"
 ./build/btc_stratum
 ```
 
-各平台依赖、Windows DLL 打包和 CI 说明统一放在 [构建与发布 Wiki](https://github.com/lxzcl/BTCRig/wiki/Build-and-Releases.zh-CN)。
+### Windows / MSYS2 UCRT64 构建
+
+打开 **MSYS2 UCRT64** 终端，运行 `echo $MSYSTEM`，确认输出为 `UCRT64`。然后安装依赖：
+
+```bash
+pacman -Syu
+pacman -S --needed \
+  mingw-w64-ucrt-x86_64-gcc \
+  mingw-w64-ucrt-x86_64-cmake \
+  mingw-w64-ucrt-x86_64-openssl \
+  mingw-w64-ucrt-x86_64-jansson \
+  mingw-w64-ucrt-x86_64-pkgconf \
+  git make
+```
+
+如果 `pacman -Syu` 要求关闭终端，请重新打开 UCRT64 终端，再执行后续命令。构建并测试三个程序：
+
+```bash
+git clone https://github.com/lxzcl/BTCRig.git
+cd BTCRig
+cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+cmake --build build -j"$(nproc)"
+./build/btc_stratum.exe --self-test
+./build/btc_proxy.exe --version
+./build/btc_bench.exe -t 1 -s 1
+```
+
+打包 EXE、配置文件及运行所需 DLL：
+
+```bash
+rm -rf dist
+mkdir -p dist
+cp build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe config.json proxy.json dist/
+
+ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
+  | awk '{for (i=1; i<=NF; i++) if ($i ~ /^\/ucrt64\/bin\//) print $i}' \
+  | sort -u \
+  | xargs -r -I{} cp -u "{}" dist/
+```
+
+在其他 Windows 电脑上运行时，应复制整个 `dist/` 目录。
 
 ## 算力参考
 
