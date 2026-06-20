@@ -274,6 +274,207 @@ BTC_ARM_ALWAYS_INLINE void sha256_arm_compress_second_hash(uint32x4_t sched0,
     *out_efgh = vaddq_u32(efgh, efgh_orig);
 }
 
+BTC_ARM_ALWAYS_INLINE void sha256_arm_compress_btc_tail2(uint32x4_t start_abcd,
+                                                         uint32x4_t start_efgh,
+                                                         uint32x4_t a_sched0,
+                                                         uint32x4_t b_sched0,
+                                                         uint32x4_t *a_out_abcd,
+                                                         uint32x4_t *a_out_efgh,
+                                                         uint32x4_t *b_out_abcd,
+                                                         uint32x4_t *b_out_efgh) {
+    uint32x4_t a_abcd = start_abcd;
+    uint32x4_t a_efgh = start_efgh;
+    uint32x4_t b_abcd = start_abcd;
+    uint32x4_t b_efgh = start_efgh;
+    uint32x4_t a_sched1 = make_u32x4(0x80000000U, 0, 0, 0);
+    uint32x4_t a_sched2 = make_u32x4(0, 0, 0, 0);
+    uint32x4_t a_sched3 = make_u32x4(0, 0, 0, 80U * 8U);
+    uint32x4_t b_sched1 = a_sched1;
+    uint32x4_t b_sched2 = a_sched2;
+    uint32x4_t b_sched3 = a_sched3;
+
+#define BTC_SHA256_ARM_ROUND4_PAIR(a_schedule, b_schedule, offset) do { \
+        const uint32x4_t k__ = vld1q_u32(&k_sha256_round_constants[(offset)]); \
+        const uint32x4_t a_wk__ = vaddq_u32((a_schedule), k__); \
+        const uint32x4_t b_wk__ = vaddq_u32((b_schedule), k__); \
+        const uint32x4_t a_abcd_prev__ = a_abcd; \
+        const uint32x4_t b_abcd_prev__ = b_abcd; \
+        a_abcd = vsha256hq_u32(a_abcd_prev__, a_efgh, a_wk__); \
+        b_abcd = vsha256hq_u32(b_abcd_prev__, b_efgh, b_wk__); \
+        a_efgh = vsha256h2q_u32(a_efgh, a_abcd_prev__, a_wk__); \
+        b_efgh = vsha256h2q_u32(b_efgh, b_abcd_prev__, b_wk__); \
+    } while (0)
+
+#define BTC_SHA256_ARM_ROUND4_WK_PAIR(wk_vec) do { \
+        const uint32x4_t wk__ = (wk_vec); \
+        const uint32x4_t a_abcd_prev__ = a_abcd; \
+        const uint32x4_t b_abcd_prev__ = b_abcd; \
+        a_abcd = vsha256hq_u32(a_abcd_prev__, a_efgh, wk__); \
+        b_abcd = vsha256hq_u32(b_abcd_prev__, b_efgh, wk__); \
+        a_efgh = vsha256h2q_u32(a_efgh, a_abcd_prev__, wk__); \
+        b_efgh = vsha256h2q_u32(b_efgh, b_abcd_prev__, wk__); \
+    } while (0)
+
+    BTC_SHA256_ARM_ROUND4_PAIR(a_sched0, b_sched0, 0);
+    BTC_SHA256_ARM_ROUND4_WK_PAIR(vld1q_u32(k_first_tail_wk1));
+    BTC_SHA256_ARM_ROUND4_WK_PAIR(vld1q_u32(k_first_tail_wk2));
+    BTC_SHA256_ARM_ROUND4_WK_PAIR(vld1q_u32(k_first_tail_wk3));
+
+#define BTC_SHA256_ARM_ROUNDS16_PAIR(offset) do { \
+        a_sched0 = vsha256su1q_u32(vsha256su0q_u32(a_sched0, a_sched1), a_sched2, a_sched3); \
+        b_sched0 = vsha256su1q_u32(vsha256su0q_u32(b_sched0, b_sched1), b_sched2, b_sched3); \
+        BTC_SHA256_ARM_ROUND4_PAIR(a_sched0, b_sched0, (offset)); \
+        a_sched1 = vsha256su1q_u32(vsha256su0q_u32(a_sched1, a_sched2), a_sched3, a_sched0); \
+        b_sched1 = vsha256su1q_u32(vsha256su0q_u32(b_sched1, b_sched2), b_sched3, b_sched0); \
+        BTC_SHA256_ARM_ROUND4_PAIR(a_sched1, b_sched1, (offset) + 4); \
+        a_sched2 = vsha256su1q_u32(vsha256su0q_u32(a_sched2, a_sched3), a_sched0, a_sched1); \
+        b_sched2 = vsha256su1q_u32(vsha256su0q_u32(b_sched2, b_sched3), b_sched0, b_sched1); \
+        BTC_SHA256_ARM_ROUND4_PAIR(a_sched2, b_sched2, (offset) + 8); \
+        a_sched3 = vsha256su1q_u32(vsha256su0q_u32(a_sched3, a_sched0), a_sched1, a_sched2); \
+        b_sched3 = vsha256su1q_u32(vsha256su0q_u32(b_sched3, b_sched0), b_sched1, b_sched2); \
+        BTC_SHA256_ARM_ROUND4_PAIR(a_sched3, b_sched3, (offset) + 12); \
+    } while (0)
+
+    BTC_SHA256_ARM_ROUNDS16_PAIR(16);
+    BTC_SHA256_ARM_ROUNDS16_PAIR(32);
+    BTC_SHA256_ARM_ROUNDS16_PAIR(48);
+
+#undef BTC_SHA256_ARM_ROUNDS16_PAIR
+#undef BTC_SHA256_ARM_ROUND4_WK_PAIR
+#undef BTC_SHA256_ARM_ROUND4_PAIR
+
+    *a_out_abcd = vaddq_u32(a_abcd, start_abcd);
+    *a_out_efgh = vaddq_u32(a_efgh, start_efgh);
+    *b_out_abcd = vaddq_u32(b_abcd, start_abcd);
+    *b_out_efgh = vaddq_u32(b_efgh, start_efgh);
+}
+
+BTC_ARM_ALWAYS_INLINE void sha256_arm_compress_second_hash2(uint32x4_t a_sched0,
+                                                            uint32x4_t a_sched1,
+                                                            uint32x4_t b_sched0,
+                                                            uint32x4_t b_sched1,
+                                                            uint32x4_t *a_out_abcd,
+                                                            uint32x4_t *a_out_efgh,
+                                                            uint32x4_t *b_out_abcd,
+                                                            uint32x4_t *b_out_efgh) {
+    const uint32x4_t initial_abcd = make_u32x4(k_sha256_initial_state[0],
+                                               k_sha256_initial_state[1],
+                                               k_sha256_initial_state[2],
+                                               k_sha256_initial_state[3]);
+    const uint32x4_t initial_efgh = make_u32x4(k_sha256_initial_state[4],
+                                               k_sha256_initial_state[5],
+                                               k_sha256_initial_state[6],
+                                               k_sha256_initial_state[7]);
+    uint32x4_t a_abcd = initial_abcd;
+    uint32x4_t a_efgh = initial_efgh;
+    uint32x4_t b_abcd = initial_abcd;
+    uint32x4_t b_efgh = initial_efgh;
+    uint32x4_t a_sched2 = make_u32x4(0x80000000U, 0, 0, 0);
+    uint32x4_t a_sched3 = make_u32x4(0, 0, 0, 32U * 8U);
+    uint32x4_t b_sched2 = a_sched2;
+    uint32x4_t b_sched3 = a_sched3;
+
+#define BTC_SHA256_ARM_ROUND4_PAIR(a_schedule, b_schedule, offset) do { \
+        const uint32x4_t k__ = vld1q_u32(&k_sha256_round_constants[(offset)]); \
+        const uint32x4_t a_wk__ = vaddq_u32((a_schedule), k__); \
+        const uint32x4_t b_wk__ = vaddq_u32((b_schedule), k__); \
+        const uint32x4_t a_abcd_prev__ = a_abcd; \
+        const uint32x4_t b_abcd_prev__ = b_abcd; \
+        a_abcd = vsha256hq_u32(a_abcd_prev__, a_efgh, a_wk__); \
+        b_abcd = vsha256hq_u32(b_abcd_prev__, b_efgh, b_wk__); \
+        a_efgh = vsha256h2q_u32(a_efgh, a_abcd_prev__, a_wk__); \
+        b_efgh = vsha256h2q_u32(b_efgh, b_abcd_prev__, b_wk__); \
+    } while (0)
+
+#define BTC_SHA256_ARM_ROUND4_WK_PAIR(wk_vec) do { \
+        const uint32x4_t wk__ = (wk_vec); \
+        const uint32x4_t a_abcd_prev__ = a_abcd; \
+        const uint32x4_t b_abcd_prev__ = b_abcd; \
+        a_abcd = vsha256hq_u32(a_abcd_prev__, a_efgh, wk__); \
+        b_abcd = vsha256hq_u32(b_abcd_prev__, b_efgh, wk__); \
+        a_efgh = vsha256h2q_u32(a_efgh, a_abcd_prev__, wk__); \
+        b_efgh = vsha256h2q_u32(b_efgh, b_abcd_prev__, wk__); \
+    } while (0)
+
+    BTC_SHA256_ARM_ROUND4_PAIR(a_sched0, b_sched0, 0);
+    BTC_SHA256_ARM_ROUND4_PAIR(a_sched1, b_sched1, 4);
+    BTC_SHA256_ARM_ROUND4_WK_PAIR(vld1q_u32(k_second_hash_wk2));
+    BTC_SHA256_ARM_ROUND4_WK_PAIR(vld1q_u32(k_second_hash_wk3));
+
+#define BTC_SHA256_ARM_ROUNDS16_PAIR(offset) do { \
+        a_sched0 = vsha256su1q_u32(vsha256su0q_u32(a_sched0, a_sched1), a_sched2, a_sched3); \
+        b_sched0 = vsha256su1q_u32(vsha256su0q_u32(b_sched0, b_sched1), b_sched2, b_sched3); \
+        BTC_SHA256_ARM_ROUND4_PAIR(a_sched0, b_sched0, (offset)); \
+        a_sched1 = vsha256su1q_u32(vsha256su0q_u32(a_sched1, a_sched2), a_sched3, a_sched0); \
+        b_sched1 = vsha256su1q_u32(vsha256su0q_u32(b_sched1, b_sched2), b_sched3, b_sched0); \
+        BTC_SHA256_ARM_ROUND4_PAIR(a_sched1, b_sched1, (offset) + 4); \
+        a_sched2 = vsha256su1q_u32(vsha256su0q_u32(a_sched2, a_sched3), a_sched0, a_sched1); \
+        b_sched2 = vsha256su1q_u32(vsha256su0q_u32(b_sched2, b_sched3), b_sched0, b_sched1); \
+        BTC_SHA256_ARM_ROUND4_PAIR(a_sched2, b_sched2, (offset) + 8); \
+        a_sched3 = vsha256su1q_u32(vsha256su0q_u32(a_sched3, a_sched0), a_sched1, a_sched2); \
+        b_sched3 = vsha256su1q_u32(vsha256su0q_u32(b_sched3, b_sched0), b_sched1, b_sched2); \
+        BTC_SHA256_ARM_ROUND4_PAIR(a_sched3, b_sched3, (offset) + 12); \
+    } while (0)
+
+    BTC_SHA256_ARM_ROUNDS16_PAIR(16);
+    BTC_SHA256_ARM_ROUNDS16_PAIR(32);
+    BTC_SHA256_ARM_ROUNDS16_PAIR(48);
+
+#undef BTC_SHA256_ARM_ROUNDS16_PAIR
+#undef BTC_SHA256_ARM_ROUND4_WK_PAIR
+#undef BTC_SHA256_ARM_ROUND4_PAIR
+
+    *a_out_abcd = vaddq_u32(a_abcd, initial_abcd);
+    *a_out_efgh = vaddq_u32(a_efgh, initial_efgh);
+    *b_out_abcd = vaddq_u32(b_abcd, initial_abcd);
+    *b_out_efgh = vaddq_u32(b_efgh, initial_efgh);
+}
+
+BTC_ARM_ALWAYS_INLINE void sha256d_hash_nonce_pair_arm_raw(const sha256_midstate_t *state,
+                                                           uint32_t tail0,
+                                                           uint32_t tail1,
+                                                           uint32_t tail2,
+                                                           uint32_t nonce_a,
+                                                           uint32_t nonce_b,
+                                                           uint32_t out_a[8],
+                                                           uint32_t out_b[8]) {
+    const uint32x4_t start_abcd = vld1q_u32(&state->fast_state[0]);
+    const uint32x4_t start_efgh = vld1q_u32(&state->fast_state[4]);
+    uint32x4_t first_a_abcd;
+    uint32x4_t first_a_efgh;
+    uint32x4_t first_b_abcd;
+    uint32x4_t first_b_efgh;
+    uint32x4_t second_a_abcd;
+    uint32x4_t second_a_efgh;
+    uint32x4_t second_b_abcd;
+    uint32x4_t second_b_efgh;
+
+    sha256_arm_compress_btc_tail2(
+        start_abcd,
+        start_efgh,
+        make_u32x4(tail0, tail1, tail2, bswap32(nonce_a)),
+        make_u32x4(tail0, tail1, tail2, bswap32(nonce_b)),
+        &first_a_abcd,
+        &first_a_efgh,
+        &first_b_abcd,
+        &first_b_efgh);
+
+    sha256_arm_compress_second_hash2(
+        first_a_abcd,
+        first_a_efgh,
+        first_b_abcd,
+        first_b_efgh,
+        &second_a_abcd,
+        &second_a_efgh,
+        &second_b_abcd,
+        &second_b_efgh);
+
+    vst1q_u32(&out_a[0], second_a_abcd);
+    vst1q_u32(&out_a[4], second_a_efgh);
+    vst1q_u32(&out_b[0], second_b_abcd);
+    vst1q_u32(&out_b[4], second_b_efgh);
+}
+
 BTC_ARM_ALWAYS_INLINE void sha256d_hash_tail_words_arm_raw(const sha256_midstate_t *state,
                                                            const uint32_t tail_words[4],
                                                            uint32_t out_words[8]) {
@@ -317,9 +518,34 @@ void sha256d_scan_nonce_range_arm_sha2(const sha256_midstate_t *state,
     const uint32_t tail0 = base_tail_words[0];
     const uint32_t tail1 = base_tail_words[1];
     const uint32_t tail2 = base_tail_words[2];
-    uint32_t hash_words[8];
+    uint32_t hash_words_a[8];
+    uint32_t hash_words_b[8];
+    uint32_t i = 0;
 
-    for (uint32_t i = 0; i < nonce_count; ++i) {
+    const uint32_t paired_count = nonce_count & ~1U;
+    for (; i < paired_count; i += 2) {
+        uint32_t nonce_a = start_nonce + i;
+        uint32_t nonce_b = nonce_a + 1U;
+
+        sha256d_hash_nonce_pair_arm_raw(
+            state,
+            tail0,
+            tail1,
+            tail2,
+            nonce_a,
+            nonce_b,
+            hash_words_a,
+            hash_words_b);
+
+        if (hash_words_meet_target(hash_words_a, target_words) && on_match != NULL) {
+            on_match(opaque, nonce_a, hash_words_a);
+        }
+        if (hash_words_meet_target(hash_words_b, target_words) && on_match != NULL) {
+            on_match(opaque, nonce_b, hash_words_b);
+        }
+    }
+
+    if (i < nonce_count) {
         uint32_t nonce = start_nonce + i;
         uint32x4_t first_abcd;
         uint32x4_t first_efgh;
@@ -339,11 +565,11 @@ void sha256d_scan_nonce_range_arm_sha2(const sha256_midstate_t *state,
             &second_abcd,
             &second_efgh);
 
-        vst1q_u32(&hash_words[0], second_abcd);
-        vst1q_u32(&hash_words[4], second_efgh);
+        vst1q_u32(&hash_words_a[0], second_abcd);
+        vst1q_u32(&hash_words_a[4], second_efgh);
 
-        if (hash_words_meet_target(hash_words, target_words) && on_match != NULL) {
-            on_match(opaque, nonce, hash_words);
+        if (hash_words_meet_target(hash_words_a, target_words) && on_match != NULL) {
+            on_match(opaque, nonce, hash_words_a);
         }
     }
 }

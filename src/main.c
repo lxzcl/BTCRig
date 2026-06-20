@@ -98,6 +98,7 @@ static void bench_scan_match(void *opaque, uint32_t nonce, const uint32_t hash_w
 }
 
 static int sha256d_self_check_backend(sha256d_backend_t backend) {
+    const uint32_t range_check_count = 5;
     const uint32_t nonces[] = {0, 1, 0x13579bdfU, 0xffffffffU};
     uint8_t header[80];
     uint8_t full[32];
@@ -136,9 +137,9 @@ static int sha256d_self_check_backend(sha256d_backend_t backend) {
     memset(&range_check, 0, sizeof(range_check));
     memcpy(range_check.header, header, sizeof(range_check.header));
     range_check.expected_nonce = 0;
-    sha256d_nonce_range_func()(&midstate, tail_words, target_words, 0, 4,
+    sha256d_nonce_range_func()(&midstate, tail_words, target_words, 0, range_check_count,
                                &range_check, range_self_check_match);
-    if (range_check.failed || range_check.seen != 4) {
+    if (range_check.failed || range_check.seen != range_check_count) {
         fprintf(stderr,
                 "sha256d range self-check failed backend=%s seen=%zu\n",
                 sha256d_backend_name(backend),
