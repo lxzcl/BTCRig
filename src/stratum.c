@@ -23,6 +23,7 @@
 #include <ws2tcpip.h>
 #else
 #include <netdb.h>
+#include <signal.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -92,6 +93,12 @@ static int network_init(void) {
     if (failed) {
         fprintf(stderr, "%s[NET]%s WSAStartup failed: %d\n", C_BRIGHT_RED, C_RESET, rc);
         return -1;
+    }
+#else
+    static int initialized = 0;
+    if (!initialized) {
+        signal(SIGPIPE, SIG_IGN);
+        initialized = 1;
     }
 #endif
     return 0;
@@ -584,11 +591,24 @@ static int keyboard_input_poll(keyboard_input_t *input, char *out) {
 }
 
 static void print_hashrate_value(double hashes_per_second) {
-    if (hashes_per_second >= 1000000.0) {
-        printf("%s%.3f MH/s%s", C_BRIGHT_GREEN, hashes_per_second / 1000000.0, C_RESET);
-    } else {
-        printf("%s%.1f kH/s%s", C_BRIGHT_GREEN, hashes_per_second / 1000.0, C_RESET);
+    const char *unit = "H/s";
+    double value = hashes_per_second;
+
+    if (value >= 1000000000000.0) {
+        value /= 1000000000000.0;
+        unit = "TH/s";
+    } else if (value >= 1000000000.0) {
+        value /= 1000000000.0;
+        unit = "GH/s";
+    } else if (value >= 1000000.0) {
+        value /= 1000000.0;
+        unit = "MH/s";
+    } else if (value >= 1000.0) {
+        value /= 1000.0;
+        unit = "kH/s";
     }
+
+    printf("%s%.3f %s%s", C_BRIGHT_GREEN, value, unit, C_RESET);
 }
 
 static void register_pending_share(stratum_state_t *state, int id, const miner_share_t *share, double now) {
@@ -1218,13 +1238,12 @@ static void maybe_print_stats(stratum_state_t *state,
     }
 
     uint64_t hashes = miner_hashes(state->miner);
-    double khs = (double)(hashes - *last_hashes) / (now - *last_time) / 1000.0;
-    printf("%s[STATS]%s kh/s=%s%.1f%s hashes=%s%llu%s submit=%lu ok=%s%lu%s reject=%s%lu%s diff=%s%.8f%s\n",
+    double rate = (double)(hashes - *last_hashes) / (now - *last_time);
+    printf("%s[STATS]%s rate=",
            C_BRIGHT_GREEN,
-           C_RESET,
-           C_BRIGHT_GREEN,
-           khs,
-           C_RESET,
+           C_RESET);
+    print_hashrate_value(rate);
+    printf(" hashes=%s%llu%s submit=%lu ok=%s%lu%s reject=%s%lu%s diff=%s%.8f%s\n",
            C_GRAY,
            (unsigned long long)hashes,
            C_RESET,
@@ -1266,6 +1285,7 @@ int stratum_run_client(const char *url,
     int enable_mining = config == NULL || config->enable_mining;
     double stats_interval = config != NULL ? config->stats_interval : 5.0;
     double stop_at = config != NULL ? config->stop_at : 0.0;
+    int run_result = 0;
 
     memset(&keyboard, 0, sizeof(keyboard));
 
@@ -1318,6 +1338,7 @@ int stratum_run_client(const char *url,
     keyboard_input_init(&keyboard);
     if (send_subscribe(&conn) != 0) {
         fprintf(stderr, "[NET] send subscribe failed, reconnecting\n");
+        run_result = 1;
         goto cleanup;
     }
 
@@ -1341,6 +1362,7 @@ int stratum_run_client(const char *url,
 
         if (flush_shares(&state, &conn, user, &next_rpc_id) != 0) {
             fprintf(stderr, "[NET] submit failed, reconnecting\n");
+            run_result = 1;
             break;
         }
         maybe_roll_extranonce(&state);
@@ -1352,10 +1374,12 @@ int stratum_run_client(const char *url,
         }
         if (rc == 0) {
             printf("%s[NET]%s pool closed connection\n", C_YELLOW, C_RESET);
+            run_result = 1;
             break;
         }
         if (rc < 0) {
             fprintf(stderr, "[NET] read failed rc=%d, reconnecting\n", rc);
+            run_result = 1;
             break;
         }
         if (line[0] != '\0') {
@@ -1365,6 +1389,7 @@ int stratum_run_client(const char *url,
         if (state.subscribed && !authorize_sent) {
             if (send_authorize(&conn, user, password) != 0) {
                 fprintf(stderr, "[NET] send authorize failed, reconnecting\n");
+                run_result = 1;
                 break;
             }
             authorize_sent = 1;
@@ -1373,6 +1398,7 @@ int stratum_run_client(const char *url,
         if (state.authorized && suggest_difficulty > 0.0 && !suggest_sent) {
             if (send_suggest_difficulty(&conn, suggest_difficulty) != 0) {
                 fprintf(stderr, "[NET] send suggest_difficulty failed, reconnecting\n");
+                run_result = 1;
                 break;
             }
             suggest_sent = 1;
@@ -1384,5 +1410,5 @@ cleanup:
     free(last_thread_hashes);
     miner_destroy(miner);
     conn_close(&conn);
-    return 0;
+    return run_result;
 }
