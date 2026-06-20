@@ -287,11 +287,11 @@ git push origin master v0.1.3
 
 ## 开发者捐助
 
-BTCRig 默认启用透明的 1% 开发者捐助，调度方式参考 XMRig。默认情况下，程序使用配置的钱包挖矿 99 分钟，然后为开发者地址挖矿 1 分钟。第一次捐助会在累计 49.5 至 148.5 分钟的有效用户挖矿时间后随机触发，避免大量客户端同时切换。
+BTCRig 默认启用透明的 1% 定时开发者捐助。默认情况下，程序使用配置的钱包挖矿 99 分钟，然后为开发者地址挖矿 1 分钟。第一次捐助会在累计 49.5 至 148.5 分钟的有效用户挖矿时间后随机触发，避免大量客户端同时切换。
 
 捐助会话沿用当前用户矿池的地址、密码和建议难度，只替换钱包地址。只有连接完成授权并收到有效任务后才开始计算捐助时间。如果捐助连接失败，程序会立即返回用户挖矿。控制台会明确显示当前模式、地址、矿池和调度时间。
 
-与 XMRig 一样，官方构建的最低捐助比例在编译期设为 1%。配置 `"donate-level": 0` 或使用 `--donate-level 0` 会被忽略。需要无捐助版本时，必须先把 `src/donation.h` 中的 `DONATION_MINIMUM_LEVEL` 从 `1` 改为 `0` 并自行重新编译，然后配置 `"donate-level": 0`。
+官方构建的最低捐助比例在编译期设为 1%。配置 `"donate-level": 0` 或使用 `--donate-level 0` 会被忽略。需要无捐助版本时，必须先把 `src/donation.h` 中的 `DONATION_MINIMUM_LEVEL` 从 `1` 改为 `0` 并自行重新编译，然后配置 `"donate-level": 0`。
 
 ## 交互按键
 
@@ -362,8 +362,14 @@ BTC_MINER_SHA_BACKEND=arm-sha2 ./build/btc_bench -t "$(nproc)" -s 10
 ```
 
 在 x86 CPU 上，`auto` 会优先选择可用的 `x86-sha-ni`，否则回退到 OpenSSL。
-当前 x86 后端已经使用 SHA-NI 的 SHA256 轮函数和消息调度指令。
-AVX2 多路 nonce 批处理属于下一阶段优化。
+当前 x86 后端使用 SHA-NI 的 SHA256 轮函数和消息调度指令，并通过双路交错 nonce 扫描提高指令级并行度。
+
+`btc_stratum` 启动时会显示当前构建可用的后端和实际选择的后端：
+
+```text
+[SHA] available=x86-sha-ni,openssl,fast-c
+[SHA] selected=x86-sha-ni mode=auto
+```
 
 ## 配置文件
 
@@ -405,14 +411,12 @@ AVX2 多路 nonce 批处理属于下一阶段优化。
 - 从 `v0.1.0` 开始的统一 `VERSION` 版本控制。
 - GitHub Actions Windows UCRT64 构建和 zip 产物打包。
 - GitHub Actions 在 `master` 和手动发布运行中自动把 Windows zip 推送到 Releases。
-- x86 SHA-NI SHA256d 后端，并保留 OpenSSL 回退。
-- 透明的 XMRig 风格定时开发者捐助，默认比例为 1%。
+- x86 SHA-NI SHA256d 后端，支持双路交错 nonce 扫描，并保留 OpenSSL 回退。
+- 透明的定时开发者捐助，默认比例为 1%。
 
 ## 后续计划
 
-- 在 SHA-NI 后端之上继续做 x86 AVX2 多路 nonce 批处理。
 - Linux 和 Termux 的 GitHub Actions 构建。
-- 使用 Git tag 的版本化 GitHub Release。
-- 增加 benchmark 模式，方便比较 OpenSSL、普通 C、ARM SHA2、x86 SHA-NI 和未来 AVX2 批处理。
+- 完善 benchmark 输出，方便比较 OpenSSL、普通 C、ARM SHA2 和 x86 SHA-NI。
 - 更完整的 Windows 和 Linux 发布包。
 - 增强重复 share、重连、矿池难度变化等挖矿稳定性诊断。

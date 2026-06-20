@@ -99,6 +99,42 @@ static int configure_sha_backend_from_env(void) {
     return 0;
 }
 
+static void print_sha_backend_summary(void) {
+    static const sha256d_backend_t backends[] = {
+        SHA256D_BACKEND_X86_SHA_NI,
+        SHA256D_BACKEND_ARM_SHA2,
+        SHA256D_BACKEND_OPENSSL,
+        SHA256D_BACKEND_FAST_C,
+    };
+    const char *requested = getenv("BTC_MINER_SHA_BACKEND");
+    const char *mode = requested == NULL || requested[0] == '\0' || strcmp(requested, "auto") == 0 ?
+        "auto" : "manual";
+    sha256d_backend_t selected = sha256d_get_backend();
+    int first = 1;
+
+    printf("%s[SHA]%s available=", C_CYAN, C_RESET);
+    for (size_t i = 0; i < sizeof(backends) / sizeof(backends[0]); ++i) {
+        sha256d_backend_t backend = backends[i];
+        if (!sha256d_backend_available(backend)) {
+            continue;
+        }
+        printf("%s%s%s%s",
+               first ? "" : ",",
+               backend == selected ? C_BRIGHT_GREEN : C_GRAY,
+               sha256d_backend_name(backend),
+               C_RESET);
+        first = 0;
+    }
+    printf("\n");
+    printf("%s[SHA]%s selected=%s%s%s mode=%s\n",
+           C_CYAN,
+           C_RESET,
+           C_BRIGHT_GREEN,
+           sha256d_backend_name(selected),
+           C_RESET,
+           mode);
+}
+
 #if defined(_WIN32)
 static DWORD WINAPI stdio_flush_thread(LPVOID ignored) {
     (void)ignored;
@@ -459,7 +495,9 @@ int main(int argc, char **argv) {
 
     app_config.retries = -1;
 
-    printf("%s[CONFIG]%s pools=%d threads=%s%d%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%% sha=%s%s%s\n",
+    print_sha_backend_summary();
+
+    printf("%s[CONFIG]%s pools=%d threads=%s%d%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
            C_CYAN,
            C_RESET,
            app_config.pool_count,
@@ -471,10 +509,7 @@ int main(int argc, char **argv) {
            MAX_RECONNECT_DELAY,
            app_config.stats_interval,
            app_config.runtime_seconds,
-           app_config.donate_level,
-           C_BRIGHT_GREEN,
-           sha256d_backend_name(sha256d_get_backend()),
-           C_RESET);
+           app_config.donate_level);
 
     double stop_at = app_config.runtime_seconds > 0.0 ? monotonic_seconds() + app_config.runtime_seconds : 0.0;
     int last_rc = 0;

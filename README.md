@@ -285,11 +285,11 @@ Network reconnects are continuous. The reconnect delay starts at `retry-pause` a
 
 ## Developer Donation
 
-BTCRig defaults to a transparent 1% developer donation, following XMRig's time-based model. For the default level, the miner works for the configured user for 99 minutes and then mines for the developer address for 1 minute. The first donation is randomized between 49.5 and 148.5 minutes of active user mining so clients do not all switch at once.
+BTCRig defaults to a transparent 1% time-based developer donation. For the default level, the miner works for the configured user for 99 minutes and then mines for the developer address for 1 minute. The first donation is randomized between 49.5 and 148.5 minutes of active user mining so clients do not all switch at once.
 
 The donation session uses the currently selected user pool, including its URL, password, and suggested difficulty; only the wallet address changes. Donation time starts only after the connection is authorized and has received a job. If that connection fails, BTCRig immediately returns to user mining. The current mode, address, pool, and schedule are printed in the console.
 
-Like XMRig, the distributed binary has a compile-time minimum donation level of 1%. Setting `"donate-level": 0` or using `--donate-level 0` is ignored. To build a donation-free binary, change `DONATION_MINIMUM_LEVEL` in `src/donation.h` from `1` to `0`, rebuild BTCRig, and then set `"donate-level": 0`.
+The distributed binary has a compile-time minimum donation level of 1%. Setting `"donate-level": 0` or using `--donate-level 0` is ignored. To build a donation-free binary, change `DONATION_MINIMUM_LEVEL` in `src/donation.h` from `1` to `0`, rebuild BTCRig, and then set `"donate-level": 0`.
 
 ## Interactive Keys
 
@@ -360,8 +360,14 @@ BTC_MINER_SHA_BACKEND=arm-sha2 ./build/btc_bench -t "$(nproc)" -s 10
 ```
 
 On x86 CPUs, `auto` prefers `x86-sha-ni` when available and falls back to OpenSSL otherwise.
-The first x86 backend uses SHA-NI for the SHA256 round and message-schedule instructions.
-AVX2 multi-lane nonce batching is a separate future optimization.
+The x86 backend uses SHA-NI for the SHA256 round and message-schedule instructions, with two interleaved nonce lanes to improve instruction-level parallelism.
+
+At startup, `btc_stratum` prints the backends available in the current build and the selected backend:
+
+```text
+[SHA] available=x86-sha-ni,openssl,fast-c
+[SHA] selected=x86-sha-ni mode=auto
+```
 
 ## Configuration
 
@@ -405,14 +411,12 @@ Minimal example:
 - Unified `VERSION`-based project versioning starting at `v0.1.0`.
 - GitHub Actions Windows UCRT64 build and zip artifact packaging.
 - GitHub Actions release publishing for Windows zip packages on `master` and manual release runs.
-- x86 SHA-NI SHA256d backend with OpenSSL fallback.
-- Transparent XMRig-style time-based developer donation, defaulting to 1%.
+- x86 SHA-NI SHA256d backend with two-lane interleaved nonce scanning and OpenSSL fallback.
+- Transparent time-based developer donation, defaulting to 1%.
 
 ## Roadmap
 
-- x86 AVX2 multi-lane nonce batching on top of the SHA-NI backend.
 - Linux and Termux GitHub Actions builds.
-- Versioned GitHub Releases with tagged artifacts.
-- More benchmark modes for comparing OpenSSL, portable C, ARM SHA2, x86 SHA-NI, and future AVX2 batching.
+- More benchmark reporting for comparing OpenSSL, portable C, ARM SHA2, and x86 SHA-NI.
 - Cleaner release packaging for Windows and Linux.
 - Additional mining stability diagnostics for duplicate shares, reconnects, and pool difficulty changes.
