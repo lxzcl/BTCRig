@@ -32,7 +32,7 @@ static uint64_t donation_seed(void) {
 }
 
 int donation_level_valid(int level) {
-    return level >= 0 && level < DONATION_CYCLE_MINUTES;
+    return level >= DONATION_MINIMUM_LEVEL && level < DONATION_CYCLE_MINUTES;
 }
 
 double donation_phase_seconds(int level, int donating) {

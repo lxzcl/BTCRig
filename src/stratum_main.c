@@ -187,6 +187,20 @@ static double json_number_value_or(json_t *value, double fallback) {
     return json_is_number(value) ? json_number_value(value) : fallback;
 }
 
+static void app_config_set_donate_level(app_config_t *config, int level, const char *source) {
+    if (donation_level_valid(level)) {
+        config->donate_level = level;
+        return;
+    }
+
+    printf("%s[DONATE]%s ignored %s donate-level=%d; compiled minimum is %d%%\n",
+           C_YELLOW,
+           C_RESET,
+           source,
+           level,
+           DONATION_MINIMUM_LEVEL);
+}
+
 static int load_config_file(app_config_t *config, const char *path, int required) {
     json_error_t error;
     json_t *root = json_load_file(path, 0, &error);
@@ -214,7 +228,10 @@ static int load_config_file(app_config_t *config, const char *path, int required
     config->stats_interval = json_number_value_or(json_object_get(root, "print-time"), config->stats_interval);
     config->stats_interval = json_number_value_or(json_object_get(root, "stats"), config->stats_interval);
     config->runtime_seconds = json_number_value_or(json_object_get(root, "runtime"), config->runtime_seconds);
-    config->donate_level = json_int_value(json_object_get(root, "donate-level"), config->donate_level);
+    json_t *donate_level = json_object_get(root, "donate-level");
+    if (json_is_integer(donate_level)) {
+        app_config_set_donate_level(config, (int)json_integer_value(donate_level), "config");
+    }
 
     json_t *pools = json_object_get(root, "pools");
     if (json_is_array(pools)) {
@@ -307,7 +324,9 @@ static int run_self_test(void) {
     };
 
     if (donation_phase_seconds(1, 1) != 60.0 ||
-        donation_phase_seconds(1, 0) != 5940.0) {
+        donation_phase_seconds(1, 0) != 5940.0 ||
+        !donation_level_valid(DONATION_DEFAULT_LEVEL) ||
+        donation_level_valid(DONATION_MINIMUM_LEVEL - 1)) {
         fprintf(stderr, "donation schedule self-test failed\n");
         return 1;
     }
@@ -407,7 +426,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--reconnect-delay") == 0 && i + 1 < argc) {
             app_config.reconnect_delay = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--donate-level") == 0 && i + 1 < argc) {
-            app_config.donate_level = atoi(argv[++i]);
+            app_config_set_donate_level(&app_config, atoi(argv[++i]), "command-line");
         } else if (strcmp(argv[i], "--no-mine") == 0) {
             app_config.enable_mining = 0;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -433,8 +452,8 @@ int main(int argc, char **argv) {
         app_config.stats_interval = 0.0;
     }
     if (!donation_level_valid(app_config.donate_level)) {
-        fprintf(stderr, "%s[CONFIG]%s donate-level must be between 0 and 99\n",
-                C_BRIGHT_RED, C_RESET);
+        fprintf(stderr, "%s[CONFIG]%s default donate-level must be between %d and 99\n",
+                C_BRIGHT_RED, C_RESET, DONATION_MINIMUM_LEVEL);
         return 2;
     }
 

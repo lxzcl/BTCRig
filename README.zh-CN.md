@@ -17,7 +17,7 @@ pool: stratum+tls://public-pool.io:4333
 user: bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
 pass: x
 suggest difficulty: 0.001
-agent: BTCRig/v0.1.2
+agent: BTCRig/v0.1.3
 ```
 
 如果要使用自己的钱包，请运行时加 `-u`，或者修改 `config.json`。
@@ -211,7 +211,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 workflow 会构建三个程序，并生成 zip 产物：
 
 ```text
-BTCRig-v0.1.2-windows-ucrt64.zip
+BTCRig-v0.1.3-windows-ucrt64.zip
 ```
 
 zip 内包含：
@@ -239,13 +239,13 @@ Release 行为：
 BTCRig 使用根目录 `VERSION` 文件作为唯一版本来源。当前开发版本：
 
 ```text
-0.1.2
+0.1.3
 ```
 
 CMake 会读取这个文件并生成运行时版本宏。矿工上报的 Stratum user agent 是：
 
 ```text
-BTCRig/v0.1.2
+BTCRig/v0.1.3
 ```
 
 常用命令：
@@ -263,8 +263,8 @@ git switch dev
 # 开发和测试
 git switch master
 git merge --ff-only dev
-git tag -a v0.1.2 -m "BTCRig v0.1.2"
-git push origin master v0.1.2
+git tag -a v0.1.3 -m "BTCRig v0.1.3"
+git push origin master v0.1.3
 ```
 
 ## 常用参数
@@ -277,7 +277,7 @@ git push origin master v0.1.2
 -t, --threads N            指定 CPU 线程数，0 表示自动
 --stats N                  每 N 秒输出统计
 --runtime N                运行 N 秒，0 表示不限时
---donate-level N           捐助比例，默认 1，设为 0 可关闭
+--donate-level N           捐助比例，最低和默认均为 1
 --no-mine                  只测试连接，不启动挖矿
 --cpu-info                 显示 CPU 信息
 --self-test                运行 Stratum 解析自测
@@ -289,7 +289,9 @@ git push origin master v0.1.2
 
 BTCRig 默认启用透明的 1% 开发者捐助，调度方式参考 XMRig。默认情况下，程序使用配置的钱包挖矿 99 分钟，然后为开发者地址挖矿 1 分钟。第一次捐助会在累计 49.5 至 148.5 分钟的有效用户挖矿时间后随机触发，避免大量客户端同时切换。
 
-捐助会话沿用当前用户矿池的地址、密码和建议难度，只替换钱包地址。只有连接完成授权并收到有效任务后才开始计算捐助时间。如果捐助连接失败，程序会立即返回用户挖矿。控制台会明确显示当前模式、地址、矿池和调度时间。可以在配置文件中设置 `"donate-level": 0`，或运行时使用 `--donate-level 0` 关闭。
+捐助会话沿用当前用户矿池的地址、密码和建议难度，只替换钱包地址。只有连接完成授权并收到有效任务后才开始计算捐助时间。如果捐助连接失败，程序会立即返回用户挖矿。控制台会明确显示当前模式、地址、矿池和调度时间。
+
+与 XMRig 一样，官方构建的最低捐助比例在编译期设为 1%。配置 `"donate-level": 0` 或使用 `--donate-level 0` 会被忽略。需要无捐助版本时，必须先把 `src/donation.h` 中的 `DONATION_MINIMUM_LEVEL` 从 `1` 改为 `0` 并自行重新编译，然后配置 `"donate-level": 0`。
 
 ## 交互按键
 
