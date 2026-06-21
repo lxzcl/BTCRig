@@ -121,7 +121,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 
 | 平台 | 环境 | 后端 | 线程 | 记录算力 |
 | --- | --- | --- | ---: | ---: |
-| AMD | Windows 11 | x86-sha-ni | 32 | 约 500 MH/s |
+| AMD 7945HX | Windows 11 | x86-sha-ni | 32 | 约 500 MH/s |
 | 骁龙 8 Elite | Termux | ARMv8 SHA2 | 8 | 约 150 MH/s |
 | NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.4 MH/s |
 | NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.3 MH/s |
