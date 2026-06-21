@@ -187,7 +187,7 @@ Interactive keys while mining:
   ],
   "retries": -1,
   "retry-pause": 2,
-  "donate-level": 0,
+  "donate-level": 1,
   "print-time": 10,
   "runtime": 0
 }
