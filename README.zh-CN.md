@@ -187,7 +187,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
   ],
   "retries": -1,
   "retry-pause": 2,
-  "donate-level": 0,
+  "donate-level": 1,
   "print-time": 10,
   "runtime": 0
 }
