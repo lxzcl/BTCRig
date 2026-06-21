@@ -121,6 +121,7 @@ These are observed project measurements, not controlled cross-platform benchmark
 
 | Platform | Environment | Backend | Threads | Observed SHA256d |
 | --- | --- | --- | ---: | ---: |
+| AMD | Windows 11 | x86-sha-ni | 32 | ~500 MH/s |
 | Snapdragon 8 Elite | Termux | ARMv8 SHA2 | 8 | ~150 MH/s |
 | NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.4 MH/s |
 | NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.3 MH/s |
