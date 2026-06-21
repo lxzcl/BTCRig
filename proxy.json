@@ -5,7 +5,7 @@
     "port": 4333
   },
   "upstream": {
-    "url": "stratum+tls://public-pool.io:4333",
+    "url": "stratum+tls://public-pool.io:14333",
     "verify": true
   }
 }

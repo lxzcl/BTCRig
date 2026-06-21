@@ -26,7 +26,7 @@
 
 #define MAX_POOLS 8
 
-#define DEFAULT_POOL_URL "stratum+tls://public-pool.io:4333"
+#define DEFAULT_POOL_URL "stratum+tls://public-pool.io:14333"
 #define DEFAULT_USER "bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3"
 #define DEFAULT_PASSWORD "x"
 #define DEFAULT_SUGGEST_DIFFICULTY 0.001

@@ -15,7 +15,7 @@
 ```text
 listen: 0.0.0.0:4333
 mode: auto
-upstream: stratum+tls://public-pool.io:4333
+upstream: stratum+tls://public-pool.io:14333
 upstream verify: true
 ```
 
@@ -57,7 +57,7 @@ export BTC_PROXY_DATA_DIR=/var/lib/btc-proxy
   --listen-auto 0.0.0.0:4333 \
   --cert /etc/letsencrypt/live/example.com/fullchain.pem \
   --key /etc/letsencrypt/live/example.com/privkey.pem \
-  --upstream stratum+tls://public-pool.io:4333
+  --upstream stratum+tls://public-pool.io:14333
 ```
 
 ## proxy.json 示例
@@ -70,7 +70,7 @@ export BTC_PROXY_DATA_DIR=/var/lib/btc-proxy
     "port": 4333
   },
   "upstream": {
-    "url": "stratum+tls://public-pool.io:4333",
+    "url": "stratum+tls://public-pool.io:14333",
     "verify": true
   }
 }

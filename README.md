@@ -9,7 +9,6 @@
 ![Release](https://img.shields.io/github/v/release/lxzcl/BTCRig?style=for-the-badge&color=00b894)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Termux-00b894?style=for-the-badge)
 ![SHA256d](https://img.shields.io/badge/SHA256d-CPU-00b894?style=for-the-badge)
-![Donation](https://img.shields.io/badge/default%20donation-0%25-00b894?style=for-the-badge)
 
 </div>
 
@@ -32,7 +31,6 @@ BTCRig turns idle CPU resources on Windows, Linux, Android/Termux, x86 PCs, and 
 - Continuous network reconnect with bounded backoff.
 - Plain TCP and verified or compatible TLS pool connections.
 - Human-readable hashrate units and per-thread runtime statistics.
-- Optional donation scheduling remains available, but defaults to **`0%`** and does not run in hash-worker code when disabled.
 
 ## Quick Start
 
@@ -121,7 +119,7 @@ These are observed project measurements, not controlled cross-platform benchmark
 
 | Platform | Environment | Backend | Threads | Observed SHA256d |
 | --- | --- | --- | ---: | ---: |
-| AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | ~500 MH/s |
+| AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | ~600 MH/s |
 | Snapdragon 8 Elite | Termux | ARMv8 SHA2 | 8 | ~150 MH/s |
 | NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.4 MH/s |
 | NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.3 MH/s |
@@ -181,7 +179,7 @@ Interactive keys while mining:
   },
   "pools": [
     {
-      "url": "stratum+tls://public-pool.io:4333",
+      "url": "stratum+tls://public-pool.io:14333",
       "user": "bc1q_example_wallet.worker",
       "pass": "x",
       "diff": 0.001
@@ -217,6 +215,10 @@ BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
 - [Proxy guide](PROXY.md)
 - [Chinese README](README.zh-CN.md)
 - [Release downloads](https://github.com/lxzcl/BTCRig/releases)
+
+## Developers
+The software includes a 1% developer donation by default (approximately 1 minute donated out of every 100), which applies to all mining modes. Currently, there is no way to automatically distinguish between PPLNS pool mining and solo mode in code. Pool addresses use PPLNS by default. If you are using solo mode, please note: there is an extremely small chance that a block is found during a donation interval, resulting in the entire block reward being donated. To modify the donation percentage, edit the donation parameter in the source code and recompile.
+BTC:bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
 
 ## License
 

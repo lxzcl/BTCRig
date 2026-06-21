@@ -6,7 +6,7 @@
   },
   "pools": [
     {
-      "url": "stratum+tls://public-pool.io:4333",
+      "url": "stratum+tls://public-pool.io:14333",
       "user": "bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3",
       "pass": "x",
       "diff": 0.001
