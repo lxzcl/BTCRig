@@ -114,54 +114,6 @@ BTC_ARM_ALWAYS_INLINE uint32x4_t make_u32x4(uint32_t a, uint32_t b, uint32_t c, 
     return (uint32x4_t){a, b, c, d};
 }
 
-BTC_ARM_ALWAYS_INLINE void sha256_arm_compress_vec(uint32x4_t start_abcd,
-                                                   uint32x4_t start_efgh,
-                                                   uint32x4_t sched0,
-                                                   uint32x4_t sched1,
-                                                   uint32x4_t sched2,
-                                                   uint32x4_t sched3,
-                                                   uint32x4_t *out_abcd,
-                                                   uint32x4_t *out_efgh) {
-    uint32x4_t abcd = start_abcd;
-    uint32x4_t efgh = start_efgh;
-    const uint32x4_t abcd_orig = abcd;
-    const uint32x4_t efgh_orig = efgh;
-
-#define BTC_SHA256_ARM_ROUND4(abcd_var, efgh_var, schedule, offset) do { \
-        const uint32x4_t wk__ = vaddq_u32((schedule), vld1q_u32(&k_sha256_round_constants[(offset)])); \
-        const uint32x4_t abcd_prev__ = (abcd_var); \
-        (abcd_var) = vsha256hq_u32(abcd_prev__, (efgh_var), wk__); \
-        (efgh_var) = vsha256h2q_u32((efgh_var), abcd_prev__, wk__); \
-    } while (0)
-
-    BTC_SHA256_ARM_ROUND4(abcd, efgh, sched0, 0);
-    BTC_SHA256_ARM_ROUND4(abcd, efgh, sched1, 4);
-    BTC_SHA256_ARM_ROUND4(abcd, efgh, sched2, 8);
-    BTC_SHA256_ARM_ROUND4(abcd, efgh, sched3, 12);
-
-#define BTC_SHA256_ARM_ROUNDS16(offset) do { \
-        sched0 = vsha256su1q_u32(vsha256su0q_u32(sched0, sched1), sched2, sched3); \
-        BTC_SHA256_ARM_ROUND4(abcd, efgh, sched0, (offset)); \
-        sched1 = vsha256su1q_u32(vsha256su0q_u32(sched1, sched2), sched3, sched0); \
-        BTC_SHA256_ARM_ROUND4(abcd, efgh, sched1, (offset) + 4); \
-        sched2 = vsha256su1q_u32(vsha256su0q_u32(sched2, sched3), sched0, sched1); \
-        BTC_SHA256_ARM_ROUND4(abcd, efgh, sched2, (offset) + 8); \
-        sched3 = vsha256su1q_u32(vsha256su0q_u32(sched3, sched0), sched1, sched2); \
-        BTC_SHA256_ARM_ROUND4(abcd, efgh, sched3, (offset) + 12); \
-    } while (0)
-
-    BTC_SHA256_ARM_ROUNDS16(16);
-    BTC_SHA256_ARM_ROUNDS16(32);
-    BTC_SHA256_ARM_ROUNDS16(48);
-#undef BTC_SHA256_ARM_ROUNDS16
-#undef BTC_SHA256_ARM_ROUND4
-
-    abcd = vaddq_u32(abcd, abcd_orig);
-    efgh = vaddq_u32(efgh, efgh_orig);
-    *out_abcd = abcd;
-    *out_efgh = efgh;
-}
-
 BTC_ARM_ALWAYS_INLINE void sha256_arm_compress_btc_tail(uint32x4_t start_abcd,
                                                         uint32x4_t start_efgh,
                                                         uint32x4_t sched0,
