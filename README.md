@@ -121,10 +121,12 @@ These are observed project measurements, not controlled cross-platform benchmark
 
 | Platform | Environment | Backend | Threads | Observed SHA256d |
 | --- | --- | --- | ---: | ---: |
+| AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | ~500 MH/s |
 | Snapdragon 8 Elite | Termux | ARMv8 SHA2 | 8 | ~150 MH/s |
-| NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~34.4 MH/s |
-| NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~12.3 MH/s |
-| RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | ~6 MH/s |
+| NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.4 MH/s |
+| NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.3 MH/s |
+| RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | ~8 MH/s |
+| Allwinner H3 Series | Linux Cortex-A7 | Openssl | 4 | ~1.2 MH/s |
 
 Run the same local benchmark when comparing builds:
 
