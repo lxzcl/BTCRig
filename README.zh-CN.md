@@ -122,9 +122,10 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 | 平台 | 环境 | 后端 | 线程 | 记录算力 |
 | --- | --- | --- | ---: | ---: |
 | 骁龙 8 Elite | Termux | ARMv8 SHA2 | 8 | 约 150 MH/s |
-| NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约 34.4 MH/s |
-| NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约 12.3 MH/s |
-| RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | 约 6 MH/s |
+| NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.4 MH/s |
+| NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.3 MH/s |
+| RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | 约8 MH/s |
+| Allwinner H3 Series | Linux Cortex-A7 | Openssl | 4 | 约1.2 MH/s |
 
 比较不同构建时，应在同一台机器上运行相同命令：
 
