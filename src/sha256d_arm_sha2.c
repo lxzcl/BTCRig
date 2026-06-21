@@ -105,8 +105,10 @@ BTC_ARM_ALWAYS_INLINE int hash_words_meet_target(const uint32_t hash_words[8], c
 int sha256d_arm_sha2_available(void) {
 #if defined(__linux__) && defined(AT_HWCAP) && defined(HWCAP_SHA2)
     return (getauxval(AT_HWCAP) & (unsigned long)HWCAP_SHA2) != 0;
-#else
+#elif defined(__APPLE__) && defined(__aarch64__)
     return 1;
+#else
+    return 0;
 #endif
 }
 
