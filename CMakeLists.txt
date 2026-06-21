@@ -34,6 +34,7 @@ configure_file(
 set(BTC_MINER_SHA256D_SOURCES src/sha256d.c)
 set(BTC_MINER_ARM_SHA2_FLAGS "")
 set(BTC_MINER_X86_SHA_NI_FLAGS "")
+set(BTC_MINER_NATIVE_FLAG "")
 
 check_c_compiler_flag("-march=native" HAS_MARCH_NATIVE)
 check_c_compiler_flag("-mcpu=native" HAS_MCPU_NATIVE)
@@ -41,10 +42,16 @@ check_c_compiler_flag("-march=armv8-a+crypto" HAS_MARCH_ARMV8_CRYPTO)
 check_c_compiler_flag("-msha" HAS_MSHA)
 check_c_compiler_flag("-mssse3" HAS_MSSSE3)
 check_c_compiler_flag("-msse4.1" HAS_MSSE41)
-if(BTC_MINER_NATIVE AND HAS_MCPU_NATIVE)
-    set(BTC_MINER_ARM_SHA2_FLAGS "-mcpu=native")
-elseif(HAS_MARCH_ARMV8_CRYPTO)
+if(HAS_MARCH_ARMV8_CRYPTO)
     set(BTC_MINER_ARM_SHA2_FLAGS "-march=armv8-a+crypto")
+endif()
+
+if(BTC_MINER_NATIVE)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$" AND HAS_MCPU_NATIVE)
+        set(BTC_MINER_NATIVE_FLAG "-mcpu=native")
+    elseif(HAS_MARCH_NATIVE)
+        set(BTC_MINER_NATIVE_FLAG "-march=native")
+    endif()
 endif()
 
 if(BTC_MINER_ARM_SHA2_FLAGS)
@@ -112,8 +119,8 @@ target_compile_definitions(btc_bench PRIVATE
     OPENSSL_SUPPRESS_DEPRECATED
 )
 
-if(HAS_MARCH_NATIVE)
-    target_compile_options(btc_bench PRIVATE -march=native)
+if(BTC_MINER_NATIVE_FLAG)
+    target_compile_options(btc_bench PRIVATE "${BTC_MINER_NATIVE_FLAG}")
 endif()
 
 if(HAS_ARM_SHA2_INTRINSICS)
@@ -150,8 +157,8 @@ target_include_directories(btc_stratum PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
 )
 
-if(BTC_MINER_NATIVE AND HAS_MARCH_NATIVE)
-    target_compile_options(btc_stratum PRIVATE -march=native)
+if(BTC_MINER_NATIVE_FLAG)
+    target_compile_options(btc_stratum PRIVATE "${BTC_MINER_NATIVE_FLAG}")
 endif()
 
 target_compile_definitions(btc_stratum PRIVATE
