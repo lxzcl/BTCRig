@@ -65,11 +65,13 @@ chmod +x termux.sh
 ```bash
 git clone https://github.com/lxzcl/BTCRig.git
 cd BTCRig
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF
 cmake --build build -j"$(nproc)"
 ./build/btc_stratum --self-test
 ./build/btc_stratum
 ```
+
+Termux should keep `BTC_MINER_NATIVE=OFF`. The ARM SHA2 source is still compiled with its dedicated crypto flags and selected through runtime feature detection; disabling global native tuning avoids illegal instructions on heterogeneous Android CPU clusters.
 
 ### Windows / MSYS2 UCRT64 build
 

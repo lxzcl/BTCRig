@@ -65,11 +65,13 @@ chmod +x termux.sh
 ```bash
 git clone https://github.com/lxzcl/BTCRig.git
 cd BTCRig
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF
 cmake --build build -j"$(nproc)"
 ./build/btc_stratum --self-test
 ./build/btc_stratum
 ```
+
+Termux 应保持 `BTC_MINER_NATIVE=OFF`。ARM SHA2 源文件仍会使用独立的加密扩展参数编译，并通过运行时特性检测选择；关闭全局 native 调优可以避免 Android 异构 CPU 集群上的非法指令。
 
 ### Windows / MSYS2 UCRT64 构建
 
