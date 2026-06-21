@@ -102,7 +102,9 @@ cd "${INSTALL_DIR}"
 
 build_with_cmake() {
     rm -rf build
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+    # Android devices may expose different optional ISA features across CPU clusters.
+    # Keep generic files portable; optimized ARM SHA2 code has its own per-source flags.
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF
     cmake --build build -j"${jobs}"
 }
 

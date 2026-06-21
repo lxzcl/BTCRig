@@ -16,6 +16,12 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 option(BTC_MINER_NATIVE "Enable native CPU tuning for this machine" OFF)
 
+if(BTC_MINER_NATIVE AND
+   (CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_C_COMPILER_TARGET MATCHES "android"))
+    message(WARNING "BTC_MINER_NATIVE is disabled on Android to avoid optional ISA instructions across heterogeneous CPU clusters")
+    set(BTC_MINER_NATIVE OFF)
+endif()
+
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
