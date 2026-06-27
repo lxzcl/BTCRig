@@ -25,7 +25,7 @@ BTCRig turns idle CPU resources on Windows, Linux, Android/Termux, x86 PCs, and 
 ## Highlights
 
 - Automatic backend selection: x86 SHA-NI, ARMv8 SHA2, OpenSSL, or portable C.
-- Optional OpenCL 1.2-or-older compatible scanning path for older GPU experiments; disabled by default.
+- Optional OpenCL compat10 scanning path for older GPU experiments; disabled by default at runtime.
 - Built for reusing heterogeneous idle devices instead of leaving their CPU capacity unused.
 - Two-lane interleaved x86 SHA-NI scanning and dedicated ARMv8 SHA2 range scanning.
 - Uses every logical CPU by default; thread count remains configurable.
@@ -165,10 +165,15 @@ Common commands:
 --donate-level N           donation percentage, default 0
 --no-mine                  test the connection without mining
 --no-cpu                   disable CPU workers
---opencl                   enable the optional OpenCL worker
+--opencl                   enable OpenCL workers on all GPU devices by default
+--opencl-all               use all OpenCL GPU devices
 --opencl-platform N        OpenCL platform index
 --opencl-device N          OpenCL device index
 --opencl-batch N           nonce batch size per OpenCL dispatch
+--opencl-self-test         verify the compiled OpenCL kernel without connecting to a pool
+--autotune                 force first-run CPU/GPU benchmark and update config
+--no-autotune              skip automatic first-run benchmark
+--autotune-seconds N       seconds per benchmark mode, default 1.5
 --cpu-info                 print CPU topology
 --self-test                run the Stratum parser self-test
 ```
@@ -189,12 +194,19 @@ Interactive keys while mining:
 
 ```json
 {
+  "autosave": true,
+  "autotune": {
+    "enabled": true,
+    "self-test": false,
+    "seconds": 1.5
+  },
   "cpu": {
     "enabled": true,
     "threads": 0
   },
   "opencl": {
     "enabled": false,
+    "all-devices": true,
     "platform": 0,
     "device": 0,
     "batch-size": 1048576,
@@ -219,7 +231,11 @@ Interactive keys while mining:
 
 The pool controls the effective share difficulty through `mining.set_difficulty`; `diff` is only an initial suggestion.
 
-OpenCL is intentionally opt-in. If the build machine has OpenCL headers and libraries, `btc_stratum` includes the OpenCL worker; otherwise it remains a CPU-only build. Enabling OpenCL without a usable OpenCL device prints a warning and keeps the CPU path available.
+Outside first-run autotune, OpenCL is opt-in at runtime. If the build machine has OpenCL headers and libraries, `btc_stratum` includes the compat10 OpenCL worker by default; otherwise it remains a CPU-only build. Enabling OpenCL without a usable OpenCL device prints a warning and keeps the CPU path available. When OpenCL is enabled and no specific device list is configured, all OpenCL GPU devices are used.
+
+With the default `autotune.enabled=true` and `autotune.self-test=false`, the first normal mining run performs an offline self-test and benchmark before connecting to the pool. It measures CPU-only, all-GPU, CPU+all-GPU, half-CPU+all-GPU, each single GPU, CPU+each single GPU, and for systems with more than two GPUs the "all GPUs except one" cases. The fastest mode is written back to `config.json` together with the measured hashrates, and `autotune.self-test` becomes `true`.
+
+This deliberately avoids trying every possible CPU/GPU subset. The high-value modes catch the common cases: a discrete GPU plus an integrated GPU, CPU contention with the GPU driver, and one slow or unstable GPU dragging down the group. Use `--autotune` to rerun the benchmark after changing drivers, clocks, hardware, or OpenCL batch settings.
 
 ## Backends
 
@@ -229,7 +245,7 @@ OpenCL is intentionally opt-in. If the build machine has OpenCL headers and libr
 | `arm-sha2` | ARMv8 CPU with SHA2 extensions | Dedicated ARM range scanner |
 | `openssl` | All supported builds | Library fallback |
 | `fast-c` | All supported builds | Portable C fallback |
-| `opencl` | Optional `btc_stratum` worker | Experimental OpenCL kernel for older GPU tests, disabled by default |
+| `opencl` | Optional `btc_stratum` worker | Experimental compat10 OpenCL kernel for older GPU tests, selected by autotune or enabled explicitly |
 
 Override automatic selection with `BTC_MINER_SHA_BACKEND`, for example:
 
@@ -242,9 +258,25 @@ OpenCL can be enabled from `config.json` or from the command line:
 ```bash
 ./build/btc_stratum --opencl
 ./build/btc_stratum --no-cpu --opencl --opencl-platform 0 --opencl-device 0
+./build/btc_stratum --opencl-self-test --opencl-platform 0 --opencl-device 0
 ```
 
-The OpenCL path avoids OpenCL 2.x APIs and is written for OpenCL 1.2-or-older compatibility. It is meant as a compatibility fallback for old GPU experiments, not as the default high-performance path.
+Multiple OpenCL GPUs can be selected explicitly:
+
+```json
+"opencl": {
+  "enabled": true,
+  "all-devices": false,
+  "devices": [
+    { "platform": 0, "device": 0, "batch-size": 1048576 },
+    { "platform": 1, "device": 0, "batch-size": 524288 }
+  ]
+}
+```
+
+Each OpenCL device runs a self-test before mining starts. Devices that fail the self-test are skipped while any working CPU or GPU workers continue.
+
+The OpenCL compat10 path avoids OpenCL 2.x APIs and uses only OpenCL 1.0 host APIs. OpenCL 1.0 devices need `cl_khr_global_int32_base_atomics`; OpenCL 1.1+ devices can use core global int32 atomics. It is meant as a compatibility fallback for old GPU experiments, not as the default high-performance path.
 
 ## Documentation
 

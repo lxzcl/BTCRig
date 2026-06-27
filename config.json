@@ -1,11 +1,17 @@
 {
-  "autosave": false,
+  "autosave": true,
+  "autotune": {
+    "enabled": true,
+    "self-test": false,
+    "seconds": 1.5
+  },
   "cpu": {
     "enabled": true,
     "threads": 0
   },
   "opencl": {
     "enabled": false,
+    "all-devices": true,
     "platform": 0,
     "device": 0,
     "batch-size": 1048576,

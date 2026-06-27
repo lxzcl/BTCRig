@@ -5,7 +5,7 @@
 #include <string.h>
 
 #ifndef CL_TARGET_OPENCL_VERSION
-#define CL_TARGET_OPENCL_VERSION 120
+#define CL_TARGET_OPENCL_VERSION 100
 #endif
 
 #if defined(__APPLE__)
@@ -24,8 +24,6 @@ struct opencl_miner {
     cl_command_queue queue;
     cl_program program;
     cl_kernel kernel;
-    cl_mem state_buf;
-    cl_mem target_buf;
     cl_mem count_buf;
     cl_mem matches_buf;
     uint32_t batch_size;
@@ -34,10 +32,13 @@ struct opencl_miner {
     uint32_t *matches;
     char device_name[128];
     char device_version[128];
+    char backend_name[32];
 };
 
 static const char *k_opencl_kernel =
+"#ifdef cl_khr_global_int32_base_atomics\n"
 "#pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable\n"
+"#endif\n"
 "typedef unsigned int u32;\n"
 "__constant u32 K[64] = {\n"
 "0x428a2f98U,0x71374491U,0xb5c0fbcfU,0xe9b5dba5U,0x3956c25bU,0x59f111f1U,0x923f82a4U,0xab1c5ed5U,\n"
@@ -67,18 +68,24 @@ static const char *k_opencl_kernel =
 "    h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;\n"
 "  }\n"
 "  st[0]+=a; st[1]+=b; st[2]+=c; st[3]+=d; st[4]+=e; st[5]+=f; st[6]+=g; st[7]+=h;\n"
-"}\n"
-"inline int meets_target(const u32 hash[8], __global const u32 *target) {\n"
-"  for (int i = 7; i >= 0; --i) {\n"
-"    u32 h = bswap32(hash[i]);\n"
-"    u32 t = target[i];\n"
-"    if (h < t) return 1;\n"
-"    if (h > t) return 0;\n"
-"  }\n"
+"}\n";
+
+static const char *k_opencl_kernel_tail =
+"inline int meets_target(const u32 hash[8], u32 t0, u32 t1, u32 t2, u32 t3, u32 t4, u32 t5, u32 t6, u32 t7) {\n"
+"  u32 h = bswap32(hash[7]); if (h < t7) return 1; if (h > t7) return 0;\n"
+"  h = bswap32(hash[6]); if (h < t6) return 1; if (h > t6) return 0;\n"
+"  h = bswap32(hash[5]); if (h < t5) return 1; if (h > t5) return 0;\n"
+"  h = bswap32(hash[4]); if (h < t4) return 1; if (h > t4) return 0;\n"
+"  h = bswap32(hash[3]); if (h < t3) return 1; if (h > t3) return 0;\n"
+"  h = bswap32(hash[2]); if (h < t2) return 1; if (h > t2) return 0;\n"
+"  h = bswap32(hash[1]); if (h < t1) return 1; if (h > t1) return 0;\n"
+"  h = bswap32(hash[0]); if (h < t0) return 1; if (h > t0) return 0;\n"
 "  return 1;\n"
 "}\n"
-"__kernel void scan_nonce_range(__global const u32 *fast_state,\n"
-"                               __global const u32 *target,\n"
+"__kernel void scan_nonce_range(u32 fast0, u32 fast1, u32 fast2, u32 fast3,\n"
+"                               u32 fast4, u32 fast5, u32 fast6, u32 fast7,\n"
+"                               u32 target0, u32 target1, u32 target2, u32 target3,\n"
+"                               u32 target4, u32 target5, u32 target6, u32 target7,\n"
 "                               u32 tail0, u32 tail1, u32 tail2,\n"
 "                               u32 start_nonce, u32 nonce_count,\n"
 "                               u32 max_results,\n"
@@ -89,7 +96,8 @@ static const char *k_opencl_kernel =
 "  u32 nonce = start_nonce + gid;\n"
 "  u32 st[8];\n"
 "  u32 w[64];\n"
-"  for (int i = 0; i < 8; ++i) st[i] = fast_state[i];\n"
+"  st[0] = fast0; st[1] = fast1; st[2] = fast2; st[3] = fast3;\n"
+"  st[4] = fast4; st[5] = fast5; st[6] = fast6; st[7] = fast7;\n"
 "  w[0] = tail0; w[1] = tail1; w[2] = tail2; w[3] = bswap32(nonce); w[4] = 0x80000000U;\n"
 "  for (int i = 5; i < 15; ++i) w[i] = 0U;\n"
 "  w[15] = 640U;\n"
@@ -100,7 +108,7 @@ static const char *k_opencl_kernel =
 "  for (int i = 9; i < 15; ++i) w[i] = 0U;\n"
 "  w[15] = 256U;\n"
 "  compress(out, w);\n"
-"  if (meets_target(out, target)) {\n"
+"  if (meets_target(out, target0, target1, target2, target3, target4, target5, target6, target7)) {\n"
 "    u32 idx = atomic_inc(result_count);\n"
 "    if (idx < max_results) {\n"
 "      u32 base = idx * 9U;\n"
@@ -123,6 +131,94 @@ static void set_error(char *error, size_t error_size, const char *message, cl_in
 
 static uint32_t config_u32_or(uint32_t value, uint32_t fallback) {
     return value == 0 ? fallback : value;
+}
+
+static int parse_opencl_version(const char *text, int *major, int *minor) {
+    int parsed_major = 0;
+    int parsed_minor = 0;
+    if (text == NULL) {
+        return -1;
+    }
+    if (sscanf(text, "OpenCL %d.%d", &parsed_major, &parsed_minor) != 2) {
+        return -1;
+    }
+    if (major != NULL) {
+        *major = parsed_major;
+    }
+    if (minor != NULL) {
+        *minor = parsed_minor;
+    }
+    return 0;
+}
+
+static int opencl_version_at_least(const char *text, int major, int minor) {
+    int parsed_major = 0;
+    int parsed_minor = 0;
+    if (parse_opencl_version(text, &parsed_major, &parsed_minor) != 0) {
+        return 0;
+    }
+    return parsed_major > major || (parsed_major == major && parsed_minor >= minor);
+}
+
+static int extension_list_has(const char *extensions, const char *needle) {
+    size_t needle_len = strlen(needle);
+    const char *p = extensions;
+
+    if (extensions == NULL || needle == NULL || needle_len == 0) {
+        return 0;
+    }
+
+    while ((p = strstr(p, needle)) != NULL) {
+        int left_ok = p == extensions || p[-1] == ' ';
+        char right = p[needle_len];
+        int right_ok = right == '\0' || right == ' ';
+        if (left_ok && right_ok) {
+            return 1;
+        }
+        p += needle_len;
+    }
+    return 0;
+}
+
+static int device_has_extension(cl_device_id device, const char *needle) {
+    size_t size = 0;
+    if (clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, 0, NULL, &size) != CL_SUCCESS || size == 0) {
+        return 0;
+    }
+
+    char *extensions = malloc(size);
+    if (extensions == NULL) {
+        return 0;
+    }
+    if (clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, size, extensions, NULL) != CL_SUCCESS) {
+        free(extensions);
+        return 0;
+    }
+
+    int found = extension_list_has(extensions, needle);
+    free(extensions);
+    return found;
+}
+
+static int validate_compat10_device(cl_device_id device,
+                                    const char *device_version,
+                                    char *error,
+                                    size_t error_size) {
+    if (!opencl_version_at_least(device_version, 1, 0)) {
+        set_error(error, error_size, "selected OpenCL device did not report a usable OpenCL 1.x version", CL_SUCCESS);
+        return -1;
+    }
+
+    if (!opencl_version_at_least(device_version, 1, 1) &&
+        !device_has_extension(device, "cl_khr_global_int32_base_atomics")) {
+        set_error(error,
+                  error_size,
+                  "compat10 backend requires OpenCL 1.1+ or cl_khr_global_int32_base_atomics",
+                  CL_SUCCESS);
+        return -1;
+    }
+
+    return 0;
 }
 
 static int select_platform_device(const miner_opencl_config_t *config,
@@ -193,12 +289,124 @@ static int select_platform_device(const miner_opencl_config_t *config,
     return 0;
 }
 
+static void opencl_device_config_apply_defaults(miner_opencl_device_config_t *device,
+                                                const miner_opencl_config_t *config) {
+    if (device == NULL || config == NULL) {
+        return;
+    }
+    if (device->batch_size == 0) {
+        device->batch_size = config_u32_or(config->batch_size, OPENCL_DEFAULT_BATCH_SIZE);
+    }
+    if (device->max_results == 0) {
+        device->max_results = config_u32_or(config->max_results, OPENCL_DEFAULT_MAX_RESULTS);
+    }
+    if (device->local_work_size == 0) {
+        device->local_work_size = config->local_work_size;
+    }
+}
+
+int opencl_miner_resolve_devices(const miner_opencl_config_t *config,
+                                 miner_opencl_device_config_t *devices_out,
+                                 int max_devices,
+                                 char *error,
+                                 size_t error_size) {
+    if (config == NULL || !config->enabled || devices_out == NULL || max_devices <= 0) {
+        return 0;
+    }
+
+    if (config->device_count > 0) {
+        int count = config->device_count < max_devices ? config->device_count : max_devices;
+        for (int i = 0; i < count; ++i) {
+            devices_out[i] = config->devices[i];
+            opencl_device_config_apply_defaults(&devices_out[i], config);
+        }
+        return count;
+    }
+
+    if (!config->all_devices) {
+        devices_out[0].platform = config->platform;
+        devices_out[0].device = config->device;
+        devices_out[0].batch_size = config_u32_or(config->batch_size, OPENCL_DEFAULT_BATCH_SIZE);
+        devices_out[0].local_work_size = config->local_work_size;
+        devices_out[0].max_results = config_u32_or(config->max_results, OPENCL_DEFAULT_MAX_RESULTS);
+        return 1;
+    }
+
+    cl_uint platform_count = 0;
+    cl_int rc = clGetPlatformIDs(0, NULL, &platform_count);
+    if (rc != CL_SUCCESS || platform_count == 0) {
+        set_error(error, error_size, "no OpenCL platforms found", rc);
+        return -1;
+    }
+
+    cl_platform_id *platforms = calloc(platform_count, sizeof(*platforms));
+    if (platforms == NULL) {
+        set_error(error, error_size, "OpenCL platform allocation failed", CL_SUCCESS);
+        return -1;
+    }
+
+    rc = clGetPlatformIDs(platform_count, platforms, NULL);
+    if (rc != CL_SUCCESS) {
+        free(platforms);
+        set_error(error, error_size, "failed to enumerate OpenCL platforms", rc);
+        return -1;
+    }
+
+    int found = 0;
+    for (cl_uint p = 0; p < platform_count && found < max_devices; ++p) {
+        cl_uint device_count = 0;
+        rc = clGetDeviceIDs(platforms[p], CL_DEVICE_TYPE_ALL, 0, NULL, &device_count);
+        if (rc != CL_SUCCESS || device_count == 0) {
+            continue;
+        }
+
+        cl_device_id *devices = calloc(device_count, sizeof(*devices));
+        if (devices == NULL) {
+            free(platforms);
+            set_error(error, error_size, "OpenCL device allocation failed", CL_SUCCESS);
+            return -1;
+        }
+
+        rc = clGetDeviceIDs(platforms[p], CL_DEVICE_TYPE_ALL, device_count, devices, NULL);
+        if (rc != CL_SUCCESS) {
+            free(devices);
+            continue;
+        }
+
+        for (cl_uint d = 0; d < device_count && found < max_devices; ++d) {
+            cl_device_type type = 0;
+            if (clGetDeviceInfo(devices[d], CL_DEVICE_TYPE, sizeof(type), &type, NULL) != CL_SUCCESS) {
+                continue;
+            }
+            if ((type & CL_DEVICE_TYPE_GPU) == 0) {
+                continue;
+            }
+
+            devices_out[found].platform = (int)p;
+            devices_out[found].device = (int)d;
+            devices_out[found].batch_size = config_u32_or(config->batch_size, OPENCL_DEFAULT_BATCH_SIZE);
+            devices_out[found].local_work_size = config->local_work_size;
+            devices_out[found].max_results = config_u32_or(config->max_results, OPENCL_DEFAULT_MAX_RESULTS);
+            ++found;
+        }
+
+        free(devices);
+    }
+
+    free(platforms);
+    if (found == 0) {
+        set_error(error, error_size, "no OpenCL GPU devices found", CL_SUCCESS);
+        return -1;
+    }
+    return found;
+}
+
 static int build_program(opencl_miner_t *miner, char *error, size_t error_size) {
     cl_int rc = CL_SUCCESS;
-    const char *sources[] = {k_opencl_kernel};
-    size_t lengths[] = {strlen(k_opencl_kernel)};
+    const char *sources[] = {k_opencl_kernel, k_opencl_kernel_tail};
+    size_t lengths[] = {strlen(k_opencl_kernel), strlen(k_opencl_kernel_tail)};
 
-    miner->program = clCreateProgramWithSource(miner->context, 1, sources, lengths, &rc);
+    miner->program = clCreateProgramWithSource(miner->context, 2, sources, lengths, &rc);
     if (rc != CL_SUCCESS) {
         set_error(error, error_size, "failed to create OpenCL program", rc);
         return -1;
@@ -261,11 +469,16 @@ opencl_miner_t *opencl_miner_create(const miner_opencl_config_t *config,
 
     (void)clGetDeviceInfo(miner->device, CL_DEVICE_NAME, sizeof(miner->device_name), miner->device_name, NULL);
     (void)clGetDeviceInfo(miner->device, CL_DEVICE_VERSION, sizeof(miner->device_version), miner->device_version, NULL);
+    snprintf(miner->backend_name, sizeof(miner->backend_name), "compat10");
     if (miner->device_name[0] == '\0') {
         snprintf(miner->device_name, sizeof(miner->device_name), "unknown");
     }
     if (miner->device_version[0] == '\0') {
         snprintf(miner->device_version, sizeof(miner->device_version), "unknown");
+    }
+    if (validate_compat10_device(miner->device, miner->device_version, error, error_size) != 0) {
+        opencl_miner_destroy(miner);
+        return NULL;
     }
 
     size_t max_work_group = 0;
@@ -295,18 +508,6 @@ opencl_miner_t *opencl_miner_create(const miner_opencl_config_t *config,
         return NULL;
     }
 
-    miner->state_buf = clCreateBuffer(miner->context, CL_MEM_READ_ONLY, sizeof(uint32_t) * 8U, NULL, &rc);
-    if (rc != CL_SUCCESS) {
-        set_error(error, error_size, "failed to create OpenCL state buffer", rc);
-        opencl_miner_destroy(miner);
-        return NULL;
-    }
-    miner->target_buf = clCreateBuffer(miner->context, CL_MEM_READ_ONLY, sizeof(uint32_t) * 8U, NULL, &rc);
-    if (rc != CL_SUCCESS) {
-        set_error(error, error_size, "failed to create OpenCL target buffer", rc);
-        opencl_miner_destroy(miner);
-        return NULL;
-    }
     miner->count_buf = clCreateBuffer(miner->context, CL_MEM_READ_WRITE, sizeof(uint32_t), NULL, &rc);
     if (rc != CL_SUCCESS) {
         set_error(error, error_size, "failed to create OpenCL result count buffer", rc);
@@ -345,12 +546,6 @@ void opencl_miner_destroy(opencl_miner_t *miner) {
     if (miner->count_buf != NULL) {
         clReleaseMemObject(miner->count_buf);
     }
-    if (miner->target_buf != NULL) {
-        clReleaseMemObject(miner->target_buf);
-    }
-    if (miner->state_buf != NULL) {
-        clReleaseMemObject(miner->state_buf);
-    }
     if (miner->kernel != NULL) {
         clReleaseKernel(miner->kernel);
     }
@@ -370,12 +565,162 @@ uint32_t opencl_miner_batch_size(const opencl_miner_t *miner) {
     return miner != NULL ? miner->batch_size : OPENCL_DEFAULT_BATCH_SIZE;
 }
 
+const char *opencl_miner_backend_name(const opencl_miner_t *miner) {
+    return miner != NULL ? miner->backend_name : "unavailable";
+}
+
 const char *opencl_miner_device_name(const opencl_miner_t *miner) {
     return miner != NULL ? miner->device_name : "unavailable";
 }
 
 const char *opencl_miner_device_version(const opencl_miner_t *miner) {
     return miner != NULL ? miner->device_version : "unavailable";
+}
+
+static void store_le32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)v;
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static uint32_t load_be32(const uint8_t *p) {
+#if defined(__GNUC__) && defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    uint32_t v;
+    memcpy(&v, p, sizeof(v));
+    return __builtin_bswap32(v);
+#else
+    return ((uint32_t)p[0] << 24) |
+           ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) |
+           (uint32_t)p[3];
+#endif
+}
+
+static void make_self_test_header(uint8_t header[80]) {
+    memset(header, 0, 80);
+    header[0] = 0x01;
+    header[68] = 0xff;
+    header[69] = 0xff;
+    header[70] = 0x00;
+    header[71] = 0x1d;
+}
+
+typedef struct {
+    uint8_t header[80];
+    uint32_t start_nonce;
+    uint32_t nonce_count;
+    uint32_t seen_mask;
+    int failed;
+} opencl_self_test_context_t;
+
+static void opencl_self_test_match(void *opaque, uint32_t nonce, const uint32_t hash_words[8]) {
+    opencl_self_test_context_t *ctx = (opencl_self_test_context_t *)opaque;
+    uint8_t cpu_hash[32];
+    uint8_t opencl_hash[32];
+
+    if (ctx == NULL || hash_words == NULL) {
+        return;
+    }
+    if (nonce < ctx->start_nonce || nonce >= ctx->start_nonce + ctx->nonce_count) {
+        ctx->failed = 1;
+        return;
+    }
+
+    uint32_t offset = nonce - ctx->start_nonce;
+    uint32_t bit = 1U << offset;
+    if ((ctx->seen_mask & bit) != 0) {
+        ctx->failed = 1;
+        return;
+    }
+    ctx->seen_mask |= bit;
+
+    store_le32(&ctx->header[76], nonce);
+    sha256d_80(ctx->header, cpu_hash);
+    sha256d_words_to_hash(hash_words, opencl_hash);
+    if (memcmp(cpu_hash, opencl_hash, sizeof(cpu_hash)) != 0) {
+        ctx->failed = 1;
+    }
+}
+
+int opencl_miner_self_test(const miner_opencl_config_t *config,
+                           opencl_self_test_result_t *result,
+                           char *error,
+                           size_t error_size) {
+    const uint32_t nonce_count = 16U;
+    uint8_t header[80];
+    sha256_midstate_t midstate;
+    uint32_t tail_words[4];
+    uint32_t target_words[8];
+    miner_opencl_config_t test_config;
+    opencl_self_test_context_t context;
+
+    if (result != NULL) {
+        memset(result, 0, sizeof(*result));
+    }
+
+    if (config != NULL) {
+        test_config = *config;
+    } else {
+        miner_opencl_config_defaults(&test_config);
+    }
+    test_config.batch_size = 1024U;
+    test_config.max_results = 32U;
+
+    char create_error[2048];
+    create_error[0] = '\0';
+    opencl_miner_t *miner = opencl_miner_create(&test_config, create_error, sizeof(create_error));
+    if (miner == NULL) {
+        set_error(error, error_size, create_error[0] != '\0' ? create_error : "OpenCL self-test setup failed", CL_SUCCESS);
+        return -1;
+    }
+
+    if (result != NULL) {
+        snprintf(result->backend, sizeof(result->backend), "%s", opencl_miner_backend_name(miner));
+        snprintf(result->device_name, sizeof(result->device_name), "%s", opencl_miner_device_name(miner));
+        snprintf(result->device_version, sizeof(result->device_version), "%s", opencl_miner_device_version(miner));
+        result->checked_nonces = nonce_count;
+    }
+
+    make_self_test_header(header);
+    sha256d_80_midstate_prepare(&midstate, header);
+    for (int i = 0; i < 4; ++i) {
+        tail_words[i] = load_be32(header + 64 + i * 4);
+    }
+    for (int i = 0; i < 8; ++i) {
+        target_words[i] = UINT32_MAX;
+    }
+
+    memset(&context, 0, sizeof(context));
+    memcpy(context.header, header, sizeof(context.header));
+    context.start_nonce = 0x13579b00U;
+    context.nonce_count = nonce_count;
+
+    if (opencl_miner_scan(miner,
+                          &midstate,
+                          tail_words,
+                          target_words,
+                          context.start_nonce,
+                          nonce_count,
+                          &context,
+                          opencl_self_test_match) != 0) {
+        opencl_miner_destroy(miner);
+        set_error(error, error_size, "OpenCL self-test scan failed", CL_SUCCESS);
+        return -1;
+    }
+
+    opencl_miner_destroy(miner);
+
+    uint32_t expected_mask = (1U << nonce_count) - 1U;
+    if (context.failed || context.seen_mask != expected_mask) {
+        set_error(error, error_size, "OpenCL self-test hash verification failed", CL_SUCCESS);
+        return -1;
+    }
+
+    if (error != NULL && error_size > 0) {
+        error[0] = '\0';
+    }
+    return 0;
 }
 
 int opencl_miner_scan(opencl_miner_t *miner,
@@ -390,48 +735,27 @@ int opencl_miner_scan(opencl_miner_t *miner,
         return -1;
     }
 
+    uint32_t zero = 0;
     cl_int rc = clEnqueueWriteBuffer(miner->queue,
-                                     miner->state_buf,
+                                     miner->count_buf,
                                      CL_FALSE,
                                      0,
-                                     sizeof(uint32_t) * 8U,
-                                     state->fast_state,
+                                     sizeof(zero),
+                                     &zero,
                                      0,
                                      NULL,
                                      NULL);
     if (rc != CL_SUCCESS) {
         return -1;
     }
-    rc = clEnqueueWriteBuffer(miner->queue,
-                              miner->target_buf,
-                              CL_FALSE,
-                              0,
-                              sizeof(uint32_t) * 8U,
-                              target_words,
-                              0,
-                              NULL,
-                              NULL);
-    if (rc != CL_SUCCESS) {
-        return -1;
-    }
-
-    uint32_t zero = 0;
-    rc = clEnqueueWriteBuffer(miner->queue,
-                              miner->count_buf,
-                              CL_FALSE,
-                              0,
-                              sizeof(zero),
-                              &zero,
-                              0,
-                              NULL,
-                              NULL);
-    if (rc != CL_SUCCESS) {
-        return -1;
-    }
 
     int arg = 0;
-    rc  = clSetKernelArg(miner->kernel, arg++, sizeof(miner->state_buf), &miner->state_buf);
-    rc |= clSetKernelArg(miner->kernel, arg++, sizeof(miner->target_buf), &miner->target_buf);
+    for (int i = 0; i < 8; ++i) {
+        rc |= clSetKernelArg(miner->kernel, arg++, sizeof(uint32_t), &state->fast_state[i]);
+    }
+    for (int i = 0; i < 8; ++i) {
+        rc |= clSetKernelArg(miner->kernel, arg++, sizeof(uint32_t), &target_words[i]);
+    }
     rc |= clSetKernelArg(miner->kernel, arg++, sizeof(uint32_t), &tail_words[0]);
     rc |= clSetKernelArg(miner->kernel, arg++, sizeof(uint32_t), &tail_words[1]);
     rc |= clSetKernelArg(miner->kernel, arg++, sizeof(uint32_t), &tail_words[2]);

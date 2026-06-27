@@ -6,6 +6,9 @@
 #include "sha256d.h"
 #include "stratum.h"
 #include "btcrig_version.h"
+#if defined(BTC_MINER_OPENCL)
+#include "opencl_miner.h"
+#endif
 
 #include <jansson.h>
 #include <stdint.h>
@@ -35,6 +38,8 @@
 #define DEFAULT_RECONNECT_DELAY 2
 #define MAX_RECONNECT_DELAY 60
 #define DEFAULT_STATS_INTERVAL 5.0
+#define DEFAULT_AUTOTUNE_SECONDS 1.5
+#define AUTOTUNE_MAX_RESULTS 64
 
 static char stdout_buffer[1024 * 1024];
 static char stderr_buffer[64 * 1024];
@@ -54,11 +59,92 @@ typedef struct {
     int thread_count;
     int cpu_enabled;
     int enable_mining;
+    int autosave;
+    int autotune_enabled;
+    int autotune_done;
     miner_opencl_config_t opencl;
     double runtime_seconds;
     double stats_interval;
+    double autotune_seconds;
     int donate_level;
 } app_config_t;
+
+typedef struct {
+    char name[96];
+    int cpu_threads;
+    miner_opencl_config_t opencl;
+    double hashrate;
+    int ok;
+} autotune_result_t;
+
+static int run_opencl_self_test(const miner_opencl_config_t *config) {
+#if defined(BTC_MINER_OPENCL)
+    miner_opencl_device_config_t devices[MINER_OPENCL_MAX_DEVICES];
+    char error[2048];
+    error[0] = '\0';
+    int count = opencl_miner_resolve_devices(config, devices, MINER_OPENCL_MAX_DEVICES, error, sizeof(error));
+    if (count <= 0) {
+        fprintf(stderr,
+                "%s[OPENCL]%s self-test failed: %s\n",
+                C_BRIGHT_RED,
+                C_RESET,
+                error[0] != '\0' ? error : "unknown error");
+        return 1;
+    }
+
+    int failed = 0;
+    for (int i = 0; i < count; ++i) {
+        miner_opencl_config_t device_config;
+        miner_opencl_config_defaults(&device_config);
+        if (config != NULL) {
+            device_config = *config;
+        }
+        device_config.enabled = 1;
+        device_config.all_devices = 0;
+        device_config.device_count = 0;
+        device_config.platform = devices[i].platform;
+        device_config.device = devices[i].device;
+        device_config.batch_size = devices[i].batch_size;
+        device_config.local_work_size = devices[i].local_work_size;
+        device_config.max_results = devices[i].max_results;
+
+        opencl_self_test_result_t result;
+        error[0] = '\0';
+        if (opencl_miner_self_test(&device_config, &result, error, sizeof(error)) != 0) {
+            fprintf(stderr,
+                    "%s[OPENCL]%s #%d platform=%d device=%d self-test failed: %s\n",
+                    C_BRIGHT_RED,
+                    C_RESET,
+                    i,
+                    devices[i].platform,
+                    devices[i].device,
+                    error[0] != '\0' ? error : "unknown error");
+            failed = 1;
+            continue;
+        }
+        printf("%s[OPENCL]%s #%d platform=%d device=%d self-test ok backend=%s device=%s%s%s version=%s nonces=%u\n",
+               C_BRIGHT_GREEN,
+               C_RESET,
+               i,
+               devices[i].platform,
+               devices[i].device,
+               result.backend,
+               C_BRIGHT_CYAN,
+               result.device_name,
+               C_RESET,
+               result.device_version,
+               result.checked_nonces);
+    }
+    return failed ? 1 : 0;
+#else
+    (void)config;
+    fprintf(stderr,
+            "%s[OPENCL]%s self-test unavailable: this build was compiled without OpenCL support\n",
+            C_BRIGHT_RED,
+            C_RESET);
+    return 1;
+#endif
+}
 
 static double monotonic_seconds(void) {
     struct timespec ts;
@@ -161,6 +247,20 @@ static void sleep_seconds(int seconds) {
 #endif
 }
 
+static void sleep_milliseconds(int milliseconds) {
+    if (milliseconds <= 0) {
+        return;
+    }
+#if defined(_WIN32)
+    Sleep((DWORD)milliseconds);
+#else
+    struct timespec ts;
+    ts.tv_sec = milliseconds / 1000;
+    ts.tv_nsec = (long)(milliseconds % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+#endif
+}
+
 static int retry_delay_seconds(int base_delay, unsigned long attempt) {
     int delay = base_delay;
     if (delay <= 0) {
@@ -207,9 +307,13 @@ static void app_config_set_defaults(app_config_t *config) {
     config->thread_count = 0;
     config->cpu_enabled = 1;
     config->enable_mining = 1;
+    config->autosave = 1;
+    config->autotune_enabled = 1;
+    config->autotune_done = 0;
     miner_opencl_config_defaults(&config->opencl);
     config->runtime_seconds = 0.0;
     config->stats_interval = DEFAULT_STATS_INTERVAL;
+    config->autotune_seconds = DEFAULT_AUTOTUNE_SECONDS;
     config->donate_level = DONATION_DEFAULT_LEVEL;
 }
 
@@ -267,6 +371,18 @@ static int load_config_file(app_config_t *config, const char *path, int required
 
     printf("%s[CONFIG]%s loaded %s\n", C_CYAN, C_RESET, path);
 
+    config->autosave = json_bool_value(json_object_get(root, "autosave"), config->autosave);
+
+    json_t *autotune = json_object_get(root, "autotune");
+    if (json_is_object(autotune)) {
+        config->autotune_enabled = json_bool_value(json_object_get(autotune, "enabled"), config->autotune_enabled);
+        config->autotune_done = json_bool_value(json_object_get(autotune, "self-test"), config->autotune_done);
+        config->autotune_done = json_bool_value(json_object_get(autotune, "self_test"), config->autotune_done);
+        config->autotune_done = json_bool_value(json_object_get(autotune, "done"), config->autotune_done);
+        config->autotune_done = json_bool_value(json_object_get(autotune, "completed"), config->autotune_done);
+        config->autotune_seconds = json_number_value_or(json_object_get(autotune, "seconds"), config->autotune_seconds);
+    }
+
     json_t *cpu = json_object_get(root, "cpu");
     if (json_is_object(cpu)) {
         config->cpu_enabled = json_bool_value(json_object_get(cpu, "enabled"), config->cpu_enabled);
@@ -276,6 +392,8 @@ static int load_config_file(app_config_t *config, const char *path, int required
     json_t *opencl = json_object_get(root, "opencl");
     if (json_is_object(opencl)) {
         config->opencl.enabled = json_bool_value(json_object_get(opencl, "enabled"), config->opencl.enabled);
+        config->opencl.all_devices = json_bool_value(json_object_get(opencl, "all-devices"), config->opencl.all_devices);
+        config->opencl.all_devices = json_bool_value(json_object_get(opencl, "all_devices"), config->opencl.all_devices);
         config->opencl.platform = json_int_value(json_object_get(opencl, "platform"), config->opencl.platform);
         config->opencl.device = json_int_value(json_object_get(opencl, "device"), config->opencl.device);
         config->opencl.batch_size = json_u32_value(json_object_get(opencl, "batch-size"), config->opencl.batch_size);
@@ -284,6 +402,30 @@ static int load_config_file(app_config_t *config, const char *path, int required
         config->opencl.local_work_size = json_u32_value(json_object_get(opencl, "local_work_size"), config->opencl.local_work_size);
         config->opencl.max_results = json_u32_value(json_object_get(opencl, "max-results"), config->opencl.max_results);
         config->opencl.max_results = json_u32_value(json_object_get(opencl, "max_results"), config->opencl.max_results);
+
+        json_t *devices = json_object_get(opencl, "devices");
+        if (json_is_array(devices)) {
+            config->opencl.device_count = 0;
+            config->opencl.all_devices = 0;
+            size_t index;
+            json_t *device;
+            json_array_foreach(devices, index, device) {
+                if (!json_is_object(device) || config->opencl.device_count >= MINER_OPENCL_MAX_DEVICES) {
+                    continue;
+                }
+                miner_opencl_device_config_t *dst = &config->opencl.devices[config->opencl.device_count];
+                memset(dst, 0, sizeof(*dst));
+                dst->platform = json_int_value(json_object_get(device, "platform"), config->opencl.platform);
+                dst->device = json_int_value(json_object_get(device, "device"), config->opencl.device);
+                dst->batch_size = json_u32_value(json_object_get(device, "batch-size"), config->opencl.batch_size);
+                dst->batch_size = json_u32_value(json_object_get(device, "batch_size"), dst->batch_size);
+                dst->local_work_size = json_u32_value(json_object_get(device, "local-work-size"), config->opencl.local_work_size);
+                dst->local_work_size = json_u32_value(json_object_get(device, "local_work_size"), dst->local_work_size);
+                dst->max_results = json_u32_value(json_object_get(device, "max-results"), config->opencl.max_results);
+                dst->max_results = json_u32_value(json_object_get(device, "max_results"), dst->max_results);
+                ++config->opencl.device_count;
+            }
+        }
     }
 
     config->thread_count = json_int_value(json_object_get(root, "threads"), config->thread_count);
@@ -340,6 +482,426 @@ static int load_config_file(app_config_t *config, const char *path, int required
     return 0;
 }
 
+static void autotune_make_job(miner_job_t *job) {
+    memset(job, 0, sizeof(*job));
+    copy_string(job->job_id, sizeof(job->job_id), "autotune");
+    copy_string(job->extranonce2, sizeof(job->extranonce2), "00000000");
+    copy_string(job->ntime, sizeof(job->ntime), "00000000");
+    job->header[0] = 0x01;
+    job->header[68] = 0xff;
+    job->header[69] = 0xff;
+    job->header[70] = 0x00;
+    job->header[71] = 0x1d;
+    memset(job->target, 0, sizeof(job->target));
+}
+
+static void autotune_disable_opencl(miner_opencl_config_t *config) {
+    miner_opencl_config_defaults(config);
+    config->enabled = 0;
+}
+
+static void autotune_all_gpu_config(const miner_opencl_config_t *base, miner_opencl_config_t *out) {
+    miner_opencl_config_defaults(out);
+    if (base != NULL) {
+        *out = *base;
+    }
+    out->enabled = 1;
+    out->all_devices = 1;
+    out->device_count = 0;
+}
+
+static void autotune_device_list_config(const miner_opencl_config_t *base,
+                                        const miner_opencl_device_config_t *devices,
+                                        int count,
+                                        miner_opencl_config_t *out) {
+    miner_opencl_config_defaults(out);
+    if (base != NULL) {
+        *out = *base;
+    }
+    out->enabled = count > 0 ? 1 : 0;
+    out->all_devices = 0;
+    out->device_count = 0;
+    for (int i = 0; i < count && i < MINER_OPENCL_MAX_DEVICES; ++i) {
+        out->devices[out->device_count++] = devices[i];
+    }
+    if (out->device_count > 0) {
+        out->platform = out->devices[0].platform;
+        out->device = out->devices[0].device;
+    }
+}
+
+static double autotune_run_mode(int cpu_threads,
+                                const miner_opencl_config_t *opencl,
+                                double seconds,
+                                int *ok) {
+    if (ok != NULL) {
+        *ok = 0;
+    }
+    if (seconds < 0.25) {
+        seconds = 0.25;
+    }
+
+    miner_t *miner = miner_create_with_options(cpu_threads, opencl);
+    if (miner == NULL) {
+        return 0.0;
+    }
+    if (miner_start(miner) != 0) {
+        miner_destroy(miner);
+        return 0.0;
+    }
+    if (opencl != NULL && opencl->enabled && miner_thread_count(miner) <= cpu_threads) {
+        miner_destroy(miner);
+        return 0.0;
+    }
+
+    miner_job_t job;
+    autotune_make_job(&job);
+    miner_set_job(miner, &job);
+
+    double started_at = monotonic_seconds();
+    double stop_at = started_at + seconds;
+    uint64_t start_hashes = miner_hashes(miner);
+    while (monotonic_seconds() < stop_at) {
+        sleep_milliseconds(50);
+    }
+    double ended_at = monotonic_seconds();
+    uint64_t end_hashes = miner_hashes(miner);
+    miner_destroy(miner);
+
+    double elapsed = ended_at - started_at;
+    if (elapsed <= 0.0 || end_hashes <= start_hashes) {
+        return 0.0;
+    }
+    if (ok != NULL) {
+        *ok = 1;
+    }
+    return (double)(end_hashes - start_hashes) / elapsed;
+}
+
+static const char *autotune_opencl_mode_name(const miner_opencl_config_t *opencl) {
+    if (opencl == NULL || !opencl->enabled) {
+        return "off";
+    }
+    if (opencl->device_count > 0) {
+        return "devices";
+    }
+    return opencl->all_devices ? "all-gpu" : "single";
+}
+
+static int autotune_append_result(autotune_result_t *results,
+                                  int *count,
+                                  const char *name,
+                                  int cpu_threads,
+                                  const miner_opencl_config_t *opencl,
+                                  double seconds) {
+    if (results == NULL || count == NULL || *count >= AUTOTUNE_MAX_RESULTS) {
+        return -1;
+    }
+
+    autotune_result_t *result = &results[*count];
+    memset(result, 0, sizeof(*result));
+    copy_string(result->name, sizeof(result->name), name);
+    result->cpu_threads = cpu_threads;
+    if (opencl != NULL) {
+        result->opencl = *opencl;
+    } else {
+        autotune_disable_opencl(&result->opencl);
+    }
+
+    printf("%s[AUTOTUNE]%s testing mode=%s%s%s cpu-threads=%d opencl=%s\n",
+           C_CYAN,
+           C_RESET,
+           C_BRIGHT_YELLOW,
+           result->name,
+           C_RESET,
+           cpu_threads,
+           autotune_opencl_mode_name(&result->opencl));
+    result->hashrate = autotune_run_mode(cpu_threads, &result->opencl, seconds, &result->ok);
+    if (result->ok) {
+        printf("%s[AUTOTUNE]%s mode=%s%s%s hashrate=%.3f MH/s\n",
+               C_CYAN,
+               C_RESET,
+               C_BRIGHT_GREEN,
+               result->name,
+               C_RESET,
+               result->hashrate / 1000000.0);
+    } else {
+        printf("%s[AUTOTUNE]%s mode=%s%s%s unavailable\n",
+               C_YELLOW,
+               C_RESET,
+               C_BRIGHT_YELLOW,
+               result->name,
+               C_RESET);
+    }
+    ++(*count);
+    return 0;
+}
+
+static json_t *json_object_get_or_create(json_t *parent, const char *key) {
+    json_t *value = json_object_get(parent, key);
+    if (json_is_object(value)) {
+        return value;
+    }
+
+    value = json_object();
+    if (value == NULL) {
+        return NULL;
+    }
+    if (json_object_set_new(parent, key, value) != 0) {
+        json_decref(value);
+        return NULL;
+    }
+    return value;
+}
+
+static int save_autotune_config(const char *path,
+                                const app_config_t *config,
+                                const autotune_result_t *results,
+                                int result_count,
+                                const autotune_result_t *best) {
+    if (path == NULL || path[0] == '\0') {
+        fprintf(stderr, "%s[AUTOTUNE]%s no config path available; result was not saved\n", C_YELLOW, C_RESET);
+        return -1;
+    }
+
+    json_error_t error;
+    json_t *root = json_load_file(path, 0, &error);
+    if (root != NULL && !json_is_object(root)) {
+        json_decref(root);
+        root = NULL;
+    }
+    if (root == NULL) {
+        root = json_object();
+        if (root == NULL) {
+            return -1;
+        }
+    }
+
+    json_object_set_new(root, "autosave", config->autosave ? json_true() : json_false());
+
+    json_t *cpu = json_object_get_or_create(root, "cpu");
+    json_t *opencl = json_object_get_or_create(root, "opencl");
+    json_t *autotune = json_object_get_or_create(root, "autotune");
+    if (cpu == NULL || opencl == NULL || autotune == NULL) {
+        json_decref(root);
+        return -1;
+    }
+
+    json_object_set_new(cpu, "enabled", config->cpu_enabled ? json_true() : json_false());
+    json_object_set_new(cpu, "threads", json_integer(config->thread_count));
+
+    json_object_set_new(opencl, "enabled", config->opencl.enabled ? json_true() : json_false());
+    json_object_set_new(opencl, "all-devices", config->opencl.all_devices ? json_true() : json_false());
+    json_object_set_new(opencl, "platform", json_integer(config->opencl.platform));
+    json_object_set_new(opencl, "device", json_integer(config->opencl.device));
+    json_object_set_new(opencl, "batch-size", json_integer((json_int_t)config->opencl.batch_size));
+    json_object_set_new(opencl, "local-work-size", json_integer((json_int_t)config->opencl.local_work_size));
+    json_object_set_new(opencl, "max-results", json_integer((json_int_t)config->opencl.max_results));
+    if (config->opencl.enabled && config->opencl.device_count > 0) {
+        json_t *devices = json_array();
+        if (devices == NULL) {
+            json_decref(root);
+            return -1;
+        }
+        for (int i = 0; i < config->opencl.device_count; ++i) {
+            const miner_opencl_device_config_t *device = &config->opencl.devices[i];
+            json_t *item = json_object();
+            if (item == NULL) {
+                json_decref(devices);
+                json_decref(root);
+                return -1;
+            }
+            json_object_set_new(item, "platform", json_integer(device->platform));
+            json_object_set_new(item, "device", json_integer(device->device));
+            json_object_set_new(item, "batch-size", json_integer((json_int_t)device->batch_size));
+            json_object_set_new(item, "local-work-size", json_integer((json_int_t)device->local_work_size));
+            json_object_set_new(item, "max-results", json_integer((json_int_t)device->max_results));
+            json_array_append_new(devices, item);
+        }
+        json_object_set_new(opencl, "devices", devices);
+    } else {
+        json_object_del(opencl, "devices");
+    }
+
+    json_object_set_new(autotune, "enabled", config->autotune_enabled ? json_true() : json_false());
+    json_object_set_new(autotune, "self-test", config->autotune_done ? json_true() : json_false());
+    json_object_set_new(autotune, "seconds", json_real(config->autotune_seconds));
+    if (best != NULL) {
+        json_object_set_new(autotune, "selected", json_string(best->name));
+        json_object_set_new(autotune, "selected-hashrate", json_real(best->hashrate));
+    }
+
+    json_t *array = json_array();
+    if (array == NULL) {
+        json_decref(root);
+        return -1;
+    }
+    for (int i = 0; i < result_count; ++i) {
+        const autotune_result_t *result = &results[i];
+        json_t *item = json_object();
+        if (item == NULL) {
+            json_decref(array);
+            json_decref(root);
+            return -1;
+        }
+        json_object_set_new(item, "mode", json_string(result->name));
+        json_object_set_new(item, "ok", result->ok ? json_true() : json_false());
+        json_object_set_new(item, "hashrate", json_real(result->hashrate));
+        json_object_set_new(item, "cpu-threads", json_integer(result->cpu_threads));
+        json_object_set_new(item, "opencl", json_string(autotune_opencl_mode_name(&result->opencl)));
+        if (result->opencl.device_count > 0) {
+            json_t *devices = json_array();
+            if (devices != NULL) {
+                for (int j = 0; j < result->opencl.device_count; ++j) {
+                    const miner_opencl_device_config_t *device = &result->opencl.devices[j];
+                    json_t *device_item = json_object();
+                    if (device_item == NULL) {
+                        continue;
+                    }
+                    json_object_set_new(device_item, "platform", json_integer(device->platform));
+                    json_object_set_new(device_item, "device", json_integer(device->device));
+                    json_array_append_new(devices, device_item);
+                }
+                json_object_set_new(item, "devices", devices);
+            }
+        }
+        json_array_append_new(array, item);
+    }
+    json_object_set_new(autotune, "results", array);
+
+    int rc = json_dump_file(root, path, JSON_INDENT(2));
+    json_decref(root);
+    if (rc != 0) {
+        fprintf(stderr, "%s[AUTOTUNE]%s failed to save %s\n", C_BRIGHT_RED, C_RESET, path);
+        return -1;
+    }
+
+    printf("%s[AUTOTUNE]%s saved result to %s%s%s\n", C_CYAN, C_RESET, C_BRIGHT_CYAN, path, C_RESET);
+    return 0;
+}
+
+static int run_autotune(app_config_t *config, const char *config_path) {
+    autotune_result_t results[AUTOTUNE_MAX_RESULTS];
+    int result_count = 0;
+    miner_opencl_config_t cpu_only_opencl;
+    miner_opencl_config_t all_gpu_opencl;
+    miner_opencl_device_config_t resolved[MINER_OPENCL_MAX_DEVICES];
+    int resolved_count = 0;
+    char error[2048];
+    error[0] = '\0';
+
+    int full_threads = config->thread_count > 0 ? config->thread_count : default_thread_count();
+    if (full_threads < 0) {
+        full_threads = 0;
+    }
+    int half_threads = full_threads > 2 ? full_threads / 2 : (full_threads > 1 ? 1 : full_threads);
+    double seconds = config->autotune_seconds > 0.0 ? config->autotune_seconds : DEFAULT_AUTOTUNE_SECONDS;
+
+    printf("%s[AUTOTUNE]%s first-run benchmark seconds=%.1f strategy=cpu,gpu-all,cpu+gpu-all,single-gpu,drop-one\n",
+           C_CYAN,
+           C_RESET,
+           seconds);
+
+    autotune_disable_opencl(&cpu_only_opencl);
+    if (full_threads > 0) {
+        autotune_append_result(results, &result_count, "cpu", full_threads, &cpu_only_opencl, seconds);
+    }
+
+#if defined(BTC_MINER_OPENCL)
+    autotune_all_gpu_config(&config->opencl, &all_gpu_opencl);
+    resolved_count = opencl_miner_resolve_devices(&all_gpu_opencl,
+                                                  resolved,
+                                                  MINER_OPENCL_MAX_DEVICES,
+                                                  error,
+                                                  sizeof(error));
+    if (resolved_count <= 0) {
+        printf("%s[AUTOTUNE]%s OpenCL skipped: %s\n",
+               C_YELLOW,
+               C_RESET,
+               error[0] != '\0' ? error : "no OpenCL GPU devices found");
+    } else {
+        autotune_append_result(results, &result_count, "all-gpu", 0, &all_gpu_opencl, seconds);
+        if (full_threads > 0) {
+            autotune_append_result(results, &result_count, "cpu+all-gpu", full_threads, &all_gpu_opencl, seconds);
+            if (half_threads > 0 && half_threads != full_threads) {
+                autotune_append_result(results, &result_count, "half-cpu+all-gpu", half_threads, &all_gpu_opencl, seconds);
+            }
+        }
+
+        for (int i = 0; i < resolved_count; ++i) {
+            miner_opencl_config_t device_opencl;
+            char name[96];
+            autotune_device_list_config(&config->opencl, &resolved[i], 1, &device_opencl);
+            snprintf(name, sizeof(name), "gpu%d", i);
+            autotune_append_result(results, &result_count, name, 0, &device_opencl, seconds);
+            if (full_threads > 0) {
+                snprintf(name, sizeof(name), "cpu+gpu%d", i);
+                autotune_append_result(results, &result_count, name, full_threads, &device_opencl, seconds);
+            }
+        }
+
+        if (resolved_count > 2) {
+            for (int skip = 0; skip < resolved_count; ++skip) {
+                miner_opencl_device_config_t subset[MINER_OPENCL_MAX_DEVICES];
+                int subset_count = 0;
+                char name[96];
+                for (int i = 0; i < resolved_count; ++i) {
+                    if (i != skip) {
+                        subset[subset_count++] = resolved[i];
+                    }
+                }
+                miner_opencl_config_t subset_opencl;
+                autotune_device_list_config(&config->opencl, subset, subset_count, &subset_opencl);
+                snprintf(name, sizeof(name), "all-gpu-minus-gpu%d", skip);
+                autotune_append_result(results, &result_count, name, 0, &subset_opencl, seconds);
+                if (full_threads > 0) {
+                    snprintf(name, sizeof(name), "cpu+all-gpu-minus-gpu%d", skip);
+                    autotune_append_result(results, &result_count, name, full_threads, &subset_opencl, seconds);
+                }
+            }
+        }
+    }
+#else
+    printf("%s[AUTOTUNE]%s OpenCL skipped: this build was compiled without OpenCL support\n", C_YELLOW, C_RESET);
+#endif
+
+    const autotune_result_t *best = NULL;
+    for (int i = 0; i < result_count; ++i) {
+        if (!results[i].ok) {
+            continue;
+        }
+        if (best == NULL || results[i].hashrate > best->hashrate) {
+            best = &results[i];
+        }
+    }
+    if (best == NULL) {
+        fprintf(stderr, "%s[AUTOTUNE]%s no working mining mode found\n", C_BRIGHT_RED, C_RESET);
+        return -1;
+    }
+
+    config->cpu_enabled = best->cpu_threads > 0 ? 1 : 0;
+    config->thread_count = best->cpu_threads;
+    config->opencl = best->opencl;
+    config->autotune_done = 1;
+
+    printf("%s[AUTOTUNE]%s selected mode=%s%s%s hashrate=%.3f MH/s cpu-threads=%d opencl=%s\n",
+           C_BRIGHT_GREEN,
+           C_RESET,
+           C_BRIGHT_GREEN,
+           best->name,
+           C_RESET,
+           best->hashrate / 1000000.0,
+           config->thread_count,
+           autotune_opencl_mode_name(&config->opencl));
+
+    if (config->autosave) {
+        save_autotune_config(config_path, config, results, result_count, best);
+    } else {
+        printf("%s[AUTOTUNE]%s autosave=false; result kept for this run only\n", C_YELLOW, C_RESET);
+    }
+    return 0;
+}
+
 static const char *find_config_arg(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         if ((strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) && i + 1 < argc) {
@@ -352,12 +914,14 @@ static const char *find_config_arg(int argc, char **argv) {
 static void usage(const char *argv0) {
     printf("Usage:\n");
     printf("  %s --self-test\n", argv0);
+    printf("  %s --opencl-self-test [--opencl-platform N] [--opencl-device N]\n", argv0);
     printf("  %s --cpu-info\n", argv0);
     printf("  %s --version\n", argv0);
     printf("  %s [-c config.json] [-o stratum+tls://host:port] [-u wallet.worker] [-p password] [-d difficulty]\n", argv0);
     printf("     [-t threads] [-r retries] [--runtime seconds] [--stats seconds]\n");
     printf("     [--reconnect-delay seconds] [--donate-level N] [--no-mine]\n");
-    printf("     [--no-cpu] [--opencl] [--opencl-platform N] [--opencl-device N] [--opencl-batch N]\n");
+    printf("     [--no-cpu] [--opencl] [--opencl-all] [--opencl-platform N] [--opencl-device N] [--opencl-batch N]\n");
+    printf("     [--autotune] [--no-autotune] [--autotune-seconds N]\n");
     printf("\nDefaults:\n");
     printf("  version: %s\n", BTCRIG_VERSION_TAG);
     printf("  agent: %s\n", BTCRIG_USER_AGENT);
@@ -369,7 +933,9 @@ static void usage(const char *argv0) {
     printf("  reconnect-delay: %d..%d seconds\n", DEFAULT_RECONNECT_DELAY, MAX_RECONNECT_DELAY);
     printf("  stats: %.1f seconds\n", DEFAULT_STATS_INTERVAL);
     printf("  threads: auto (%d recommended)\n", default_thread_count());
-    printf("  opencl: disabled by default, OpenCL 1.2-or-older compatible path when compiled in\n");
+    printf("  opencl: manual enable uses all OpenCL GPU devices unless a device is selected; autotune may select it\n");
+    printf("  opencl compat10: OpenCL 1.0/1.1 compatible, requires global int32 atomics on 1.0 devices\n");
+    printf("  autotune: enabled by default; first run benchmarks CPU/GPU modes and saves the fastest mode when autosave=true\n");
     printf("  donate-level: %d%% (%s)\n",
            DONATION_DEFAULT_LEVEL,
            DONATION_DEFAULT_LEVEL == 0 ? "disabled" : "minutes per 100 minutes");
@@ -437,6 +1003,9 @@ int main(int argc, char **argv) {
     const char *config_path = NULL;
     int config_required = 0;
     int early_rc = 0;
+    int opencl_self_test = 0;
+    int worker_override = 0;
+    int force_autotune = 0;
 
     configure_stdio();
     if (configure_sha_backend_from_env() != 0) {
@@ -489,6 +1058,7 @@ int main(int argc, char **argv) {
         } else if ((strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--threads") == 0) && i + 1 < argc) {
             app_config.thread_count = atoi(argv[++i]);
             app_config.cpu_enabled = 1;
+            worker_override = 1;
         } else if (strcmp(argv[i], "--runtime") == 0 && i + 1 < argc) {
             app_config.runtime_seconds = strtod(argv[++i], NULL);
         } else if (strcmp(argv[i], "--stats") == 0 && i + 1 < argc) {
@@ -501,14 +1071,39 @@ int main(int argc, char **argv) {
             app_config.enable_mining = 0;
         } else if (strcmp(argv[i], "--no-cpu") == 0) {
             app_config.cpu_enabled = 0;
+            worker_override = 1;
         } else if (strcmp(argv[i], "--opencl") == 0) {
+            app_config.opencl.enabled = 1;
+            worker_override = 1;
+        } else if (strcmp(argv[i], "--opencl-all") == 0) {
+            app_config.opencl.enabled = 1;
+            app_config.opencl.all_devices = 1;
+            app_config.opencl.device_count = 0;
+            worker_override = 1;
+        } else if (strcmp(argv[i], "--opencl-self-test") == 0) {
+            opencl_self_test = 1;
             app_config.opencl.enabled = 1;
         } else if (strcmp(argv[i], "--opencl-platform") == 0 && i + 1 < argc) {
             app_config.opencl.platform = atoi(argv[++i]);
+            app_config.opencl.all_devices = 0;
+            app_config.opencl.device_count = 0;
+            worker_override = 1;
         } else if (strcmp(argv[i], "--opencl-device") == 0 && i + 1 < argc) {
             app_config.opencl.device = atoi(argv[++i]);
+            app_config.opencl.all_devices = 0;
+            app_config.opencl.device_count = 0;
+            worker_override = 1;
         } else if (strcmp(argv[i], "--opencl-batch") == 0 && i + 1 < argc) {
             app_config.opencl.batch_size = (uint32_t)strtoul(argv[++i], NULL, 10);
+            worker_override = 1;
+        } else if (strcmp(argv[i], "--autotune") == 0) {
+            app_config.autotune_enabled = 1;
+            app_config.autotune_done = 0;
+            force_autotune = 1;
+        } else if (strcmp(argv[i], "--no-autotune") == 0) {
+            app_config.autotune_enabled = 0;
+        } else if (strcmp(argv[i], "--autotune-seconds") == 0 && i + 1 < argc) {
+            app_config.autotune_seconds = strtod(argv[++i], NULL);
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             usage(argv[0]);
             return 0;
@@ -516,6 +1111,10 @@ int main(int argc, char **argv) {
             usage(argv[0]);
             return 2;
         }
+    }
+
+    if (opencl_self_test) {
+        return run_opencl_self_test(&app_config.opencl);
     }
 
     if (app_config.pool_count <= 0) {
@@ -539,6 +1138,19 @@ int main(int argc, char **argv) {
                 C_BRIGHT_RED, C_RESET, DONATION_MINIMUM_LEVEL);
         return 2;
     }
+    if (!(app_config.autotune_seconds >= 0.25)) {
+        app_config.autotune_seconds = 0.25;
+    }
+
+    if (app_config.autotune_enabled && !app_config.autotune_done && app_config.enable_mining) {
+        if (worker_override && !force_autotune) {
+            printf("%s[AUTOTUNE]%s skipped because worker options were set on the command line; use --autotune to force\n",
+                   C_YELLOW,
+                   C_RESET);
+        } else if (run_autotune(&app_config, config_path) != 0) {
+            return 1;
+        }
+    }
 
     app_config.retries = -1;
 
@@ -547,7 +1159,11 @@ int main(int argc, char **argv) {
     int worker_enabled = app_config.cpu_enabled || app_config.opencl.enabled;
     int mining_enabled = app_config.enable_mining && worker_enabled;
 
-    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
+    const char *opencl_mode = !app_config.opencl.enabled ? "off" :
+        (app_config.opencl.device_count > 0 ? "devices" :
+            (app_config.opencl.all_devices ? "all-gpu" : "single"));
+
+    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mode=%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
            C_CYAN,
            C_RESET,
            app_config.pool_count,
@@ -556,6 +1172,7 @@ int main(int argc, char **argv) {
            app_config.thread_count,
            C_RESET,
            app_config.opencl.enabled ? "on" : "off",
+           opencl_mode,
            mining_enabled ? "yes" : "no",
            app_config.reconnect_delay,
            MAX_RECONNECT_DELAY,

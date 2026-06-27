@@ -12,6 +12,7 @@ sudo apt install -y build-essential cmake make pkg-config git \
   libssl-dev libjansson-dev ca-certificates wget unzip
 
 # Optional OpenCL build support. CPU-only builds do not require it.
+# CMake builds the compat10 GPU backend by default when these are present.
 sudo apt install -y ocl-icd-opencl-dev opencl-headers clinfo
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
@@ -37,6 +38,11 @@ stratum+tls://public-pool.io:4333
 OpenCL note:
 
 ```text
-OpenCL is optional and disabled in config.json by default. If CMake cannot find
-OpenCL, BTCRig still builds normally as a CPU-only miner.
+OpenCL is optional at build time. If CMake cannot find OpenCL, BTCRig still
+builds normally as a CPU-only miner. On the first normal mining run,
+`autotune.enabled=true` makes `btc_stratum` self-test CPU/GPU modes, save the
+fastest mode to config.json, and set `autotune.self-test=true`. Use
+`btc_stratum --opencl-self-test` to verify the compiled kernel without
+connecting to a pool, or `btc_stratum --autotune` to rerun the benchmark after
+changing drivers or hardware.
 ```

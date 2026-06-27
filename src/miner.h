@@ -6,13 +6,26 @@
 
 typedef struct miner miner_t;
 
+#define MINER_OPENCL_MAX_DEVICES 8
+
 typedef struct {
-    int enabled;
     int platform;
     int device;
     uint32_t batch_size;
     uint32_t local_work_size;
     uint32_t max_results;
+} miner_opencl_device_config_t;
+
+typedef struct {
+    int enabled;
+    int all_devices;
+    int platform;
+    int device;
+    uint32_t batch_size;
+    uint32_t local_work_size;
+    uint32_t max_results;
+    int device_count;
+    miner_opencl_device_config_t devices[MINER_OPENCL_MAX_DEVICES];
 } miner_opencl_config_t;
 
 typedef struct {
