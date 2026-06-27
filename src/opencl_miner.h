@@ -21,6 +21,8 @@ opencl_miner_t *opencl_miner_create(const miner_opencl_config_t *config,
                                     size_t error_size);
 void opencl_miner_destroy(opencl_miner_t *miner);
 uint32_t opencl_miner_batch_size(const opencl_miner_t *miner);
+uint32_t opencl_miner_local_work_size(const opencl_miner_t *miner);
+uint32_t opencl_miner_nonces_per_work_item(const opencl_miner_t *miner);
 const char *opencl_miner_backend_name(const opencl_miner_t *miner);
 const char *opencl_miner_device_name(const opencl_miner_t *miner);
 const char *opencl_miner_device_version(const opencl_miner_t *miner);

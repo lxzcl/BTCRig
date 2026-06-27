@@ -16,6 +16,8 @@
 
 #define OPENCL_DEFAULT_BATCH_SIZE 1048576U
 #define OPENCL_DEFAULT_MAX_RESULTS 256U
+#define OPENCL_DEFAULT_NONCES_PER_WORK_ITEM 1U
+#define OPENCL_MAX_NONCES_PER_WORK_ITEM 64U
 
 struct opencl_miner {
     cl_platform_id platform;
@@ -28,6 +30,7 @@ struct opencl_miner {
     cl_mem matches_buf;
     uint32_t batch_size;
     uint32_t local_work_size;
+    uint32_t nonces_per_work_item;
     uint32_t max_results;
     uint32_t *matches;
     char device_name[128];
@@ -40,33 +43,86 @@ static const char *k_opencl_kernel =
 "#pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable\n"
 "#endif\n"
 "typedef unsigned int u32;\n"
-"__constant u32 K[64] = {\n"
-"0x428a2f98U,0x71374491U,0xb5c0fbcfU,0xe9b5dba5U,0x3956c25bU,0x59f111f1U,0x923f82a4U,0xab1c5ed5U,\n"
-"0xd807aa98U,0x12835b01U,0x243185beU,0x550c7dc3U,0x72be5d74U,0x80deb1feU,0x9bdc06a7U,0xc19bf174U,\n"
-"0xe49b69c1U,0xefbe4786U,0x0fc19dc6U,0x240ca1ccU,0x2de92c6fU,0x4a7484aaU,0x5cb0a9dcU,0x76f988daU,\n"
-"0x983e5152U,0xa831c66dU,0xb00327c8U,0xbf597fc7U,0xc6e00bf3U,0xd5a79147U,0x06ca6351U,0x14292967U,\n"
-"0x27b70a85U,0x2e1b2138U,0x4d2c6dfcU,0x53380d13U,0x650a7354U,0x766a0abbU,0x81c2c92eU,0x92722c85U,\n"
-"0xa2bfe8a1U,0xa81a664bU,0xc24b8b70U,0xc76c51a3U,0xd192e819U,0xd6990624U,0xf40e3585U,0x106aa070U,\n"
-"0x19a4c116U,0x1e376c08U,0x2748774cU,0x34b0bcb5U,0x391c0cb3U,0x4ed8aa4aU,0x5b9cca4fU,0x682e6ff3U,\n"
-"0x748f82eeU,0x78a5636fU,0x84c87814U,0x8cc70208U,0x90befffaU,0xa4506cebU,0xbef9a3f7U,0xc67178f2U};\n"
 "inline u32 rotr32(u32 x, u32 n) { return (x >> n) | (x << (32U - n)); }\n"
 "inline u32 bswap32(u32 v) { return ((v & 0x000000ffU) << 24) | ((v & 0x0000ff00U) << 8) | ((v & 0x00ff0000U) >> 8) | ((v & 0xff000000U) >> 24); }\n"
-"inline void compress(u32 st[8], u32 w[64]) {\n"
-"  for (int i = 16; i < 64; ++i) {\n"
-"    u32 s0 = rotr32(w[i-15], 7) ^ rotr32(w[i-15], 18) ^ (w[i-15] >> 3);\n"
-"    u32 s1 = rotr32(w[i-2], 17) ^ rotr32(w[i-2], 19) ^ (w[i-2] >> 10);\n"
-"    w[i] = w[i-16] + s0 + w[i-7] + s1;\n"
-"  }\n"
+"#define SS0(x) (rotr32((x), 7) ^ rotr32((x), 18) ^ ((x) >> 3))\n"
+"#define SS1(x) (rotr32((x), 17) ^ rotr32((x), 19) ^ ((x) >> 10))\n"
+"#define BS0(x) (rotr32((x), 2) ^ rotr32((x), 13) ^ rotr32((x), 22))\n"
+"#define BS1(x) (rotr32((x), 6) ^ rotr32((x), 11) ^ rotr32((x), 25))\n"
+"#define CH(x,y,z) (((x) & (y)) ^ (~(x) & (z)))\n"
+"#define MAJ(x,y,z) (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))\n"
+"#define MSG(w0,w1,w9,w14) ((w0) += SS0(w1) + (w9) + SS1(w14))\n"
+"#define ROUND(a,b,c,d,e,f,g,h,w,k) do { u32 t1 = (h) + BS1(e) + CH(e,f,g) + (k) + (w); u32 t2 = BS0(a) + MAJ(a,b,c); (d) += t1; (h) = t1 + t2; } while (0)\n"
+"inline void compress(u32 st[8], u32 w[16]) {\n"
 "  u32 a=st[0], b=st[1], c=st[2], d=st[3], e=st[4], f=st[5], g=st[6], h=st[7];\n"
-"  for (int i = 0; i < 64; ++i) {\n"
-"    u32 S1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25);\n"
-"    u32 ch = (e & f) ^ (~e & g);\n"
-"    u32 t1 = h + S1 + ch + K[i] + w[i];\n"
-"    u32 S0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22);\n"
-"    u32 maj = (a & b) ^ (a & c) ^ (b & c);\n"
-"    u32 t2 = S0 + maj;\n"
-"    h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;\n"
-"  }\n"
+"  u32 w0=w[0], w1=w[1], w2=w[2], w3=w[3], w4=w[4], w5=w[5], w6=w[6], w7=w[7];\n"
+"  u32 w8=w[8], w9=w[9], w10=w[10], w11=w[11], w12=w[12], w13=w[13], w14=w[14], w15=w[15];\n"
+"  ROUND(a,b,c,d,e,f,g,h,w0,0x428a2f98U);\n"
+"  ROUND(h,a,b,c,d,e,f,g,w1,0x71374491U);\n"
+"  ROUND(g,h,a,b,c,d,e,f,w2,0xb5c0fbcfU);\n"
+"  ROUND(f,g,h,a,b,c,d,e,w3,0xe9b5dba5U);\n"
+"  ROUND(e,f,g,h,a,b,c,d,w4,0x3956c25bU);\n"
+"  ROUND(d,e,f,g,h,a,b,c,w5,0x59f111f1U);\n"
+"  ROUND(c,d,e,f,g,h,a,b,w6,0x923f82a4U);\n"
+"  ROUND(b,c,d,e,f,g,h,a,w7,0xab1c5ed5U);\n"
+"  ROUND(a,b,c,d,e,f,g,h,w8,0xd807aa98U);\n"
+"  ROUND(h,a,b,c,d,e,f,g,w9,0x12835b01U);\n"
+"  ROUND(g,h,a,b,c,d,e,f,w10,0x243185beU);\n"
+"  ROUND(f,g,h,a,b,c,d,e,w11,0x550c7dc3U);\n"
+"  ROUND(e,f,g,h,a,b,c,d,w12,0x72be5d74U);\n"
+"  ROUND(d,e,f,g,h,a,b,c,w13,0x80deb1feU);\n"
+"  ROUND(c,d,e,f,g,h,a,b,w14,0x9bdc06a7U);\n"
+"  ROUND(b,c,d,e,f,g,h,a,w15,0xc19bf174U);\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w0, w1, w9, w14),0xe49b69c1U);\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w1, w2, w10, w15),0xefbe4786U);\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w2, w3, w11, w0),0x0fc19dc6U);\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w3, w4, w12, w1),0x240ca1ccU);\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w4, w5, w13, w2),0x2de92c6fU);\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w5, w6, w14, w3),0x4a7484aaU);\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w6, w7, w15, w4),0x5cb0a9dcU);\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w7, w8, w0, w5),0x76f988daU);\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w8, w9, w1, w6),0x983e5152U);\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w9, w10, w2, w7),0xa831c66dU);\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w10, w11, w3, w8),0xb00327c8U);\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w11, w12, w4, w9),0xbf597fc7U);\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w12, w13, w5, w10),0xc6e00bf3U);\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w13, w14, w6, w11),0xd5a79147U);\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w14, w15, w7, w12),0x06ca6351U);\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w15, w0, w8, w13),0x14292967U);\n";
+
+static const char *k_opencl_kernel_rounds =
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w0, w1, w9, w14),0x27b70a85U);\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w1, w2, w10, w15),0x2e1b2138U);\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w2, w3, w11, w0),0x4d2c6dfcU);\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w3, w4, w12, w1),0x53380d13U);\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w4, w5, w13, w2),0x650a7354U);\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w5, w6, w14, w3),0x766a0abbU);\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w6, w7, w15, w4),0x81c2c92eU);\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w7, w8, w0, w5),0x92722c85U);\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w8, w9, w1, w6),0xa2bfe8a1U);\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w9, w10, w2, w7),0xa81a664bU);\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w10, w11, w3, w8),0xc24b8b70U);\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w11, w12, w4, w9),0xc76c51a3U);\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w12, w13, w5, w10),0xd192e819U);\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w13, w14, w6, w11),0xd6990624U);\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w14, w15, w7, w12),0xf40e3585U);\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w15, w0, w8, w13),0x106aa070U);\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w0, w1, w9, w14),0x19a4c116U);\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w1, w2, w10, w15),0x1e376c08U);\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w2, w3, w11, w0),0x2748774cU);\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w3, w4, w12, w1),0x34b0bcb5U);\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w4, w5, w13, w2),0x391c0cb3U);\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w5, w6, w14, w3),0x4ed8aa4aU);\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w6, w7, w15, w4),0x5b9cca4fU);\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w7, w8, w0, w5),0x682e6ff3U);\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w8, w9, w1, w6),0x748f82eeU);\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w9, w10, w2, w7),0x78a5636fU);\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w10, w11, w3, w8),0x84c87814U);\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w11, w12, w4, w9),0x8cc70208U);\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w12, w13, w5, w10),0x90befffaU);\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w13, w14, w6, w11),0xa4506cebU);\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w14, w15, w7, w12),0xbef9a3f7U);\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w15, w0, w8, w13),0xc67178f2U);\n"
 "  st[0]+=a; st[1]+=b; st[2]+=c; st[3]+=d; st[4]+=e; st[5]+=f; st[6]+=g; st[7]+=h;\n"
 "}\n";
 
@@ -88,32 +144,40 @@ static const char *k_opencl_kernel_tail =
 "                               u32 target4, u32 target5, u32 target6, u32 target7,\n"
 "                               u32 tail0, u32 tail1, u32 tail2,\n"
 "                               u32 start_nonce, u32 nonce_count,\n"
+"                               u32 nonces_per_work_item,\n"
 "                               u32 max_results,\n"
 "                               __global volatile u32 *result_count,\n"
 "                               __global u32 *matches) {\n"
 "  u32 gid = (u32)get_global_id(0);\n"
-"  if (gid >= nonce_count) return;\n"
-"  u32 nonce = start_nonce + gid;\n"
-"  u32 st[8];\n"
-"  u32 w[64];\n"
-"  st[0] = fast0; st[1] = fast1; st[2] = fast2; st[3] = fast3;\n"
-"  st[4] = fast4; st[5] = fast5; st[6] = fast6; st[7] = fast7;\n"
-"  w[0] = tail0; w[1] = tail1; w[2] = tail2; w[3] = bswap32(nonce); w[4] = 0x80000000U;\n"
-"  for (int i = 5; i < 15; ++i) w[i] = 0U;\n"
-"  w[15] = 640U;\n"
-"  compress(st, w);\n"
-"  u32 out[8] = {0x6a09e667U,0xbb67ae85U,0x3c6ef372U,0xa54ff53aU,0x510e527fU,0x9b05688cU,0x1f83d9abU,0x5be0cd19U};\n"
-"  for (int i = 0; i < 8; ++i) w[i] = st[i];\n"
-"  w[8] = 0x80000000U;\n"
-"  for (int i = 9; i < 15; ++i) w[i] = 0U;\n"
-"  w[15] = 256U;\n"
-"  compress(out, w);\n"
-"  if (meets_target(out, target0, target1, target2, target3, target4, target5, target6, target7)) {\n"
-"    u32 idx = atomic_inc(result_count);\n"
-"    if (idx < max_results) {\n"
-"      u32 base = idx * 9U;\n"
-"      matches[base] = nonce;\n"
-"      for (int i = 0; i < 8; ++i) matches[base + 1U + (u32)i] = out[i];\n"
+"  if (nonce_count == 0U) return;\n"
+"  u32 work_items = ((nonce_count - 1U) / nonces_per_work_item) + 1U;\n"
+"  if (gid >= work_items) return;\n"
+"  u32 base_nonce = gid * nonces_per_work_item;\n"
+"  u32 limit = nonces_per_work_item;\n"
+"  if (base_nonce + limit > nonce_count) limit = nonce_count - base_nonce;\n"
+"  for (u32 item = 0U; item < limit; ++item) {\n"
+"    u32 nonce = start_nonce + base_nonce + item;\n"
+"    u32 st[8];\n"
+"    u32 w[16];\n"
+"    st[0] = fast0; st[1] = fast1; st[2] = fast2; st[3] = fast3;\n"
+"    st[4] = fast4; st[5] = fast5; st[6] = fast6; st[7] = fast7;\n"
+"    w[0] = tail0; w[1] = tail1; w[2] = tail2; w[3] = bswap32(nonce); w[4] = 0x80000000U;\n"
+"    for (int i = 5; i < 15; ++i) w[i] = 0U;\n"
+"    w[15] = 640U;\n"
+"    compress(st, w);\n"
+"    u32 out[8] = {0x6a09e667U,0xbb67ae85U,0x3c6ef372U,0xa54ff53aU,0x510e527fU,0x9b05688cU,0x1f83d9abU,0x5be0cd19U};\n"
+"    for (int i = 0; i < 8; ++i) w[i] = st[i];\n"
+"    w[8] = 0x80000000U;\n"
+"    for (int i = 9; i < 15; ++i) w[i] = 0U;\n"
+"    w[15] = 256U;\n"
+"    compress(out, w);\n"
+"    if (meets_target(out, target0, target1, target2, target3, target4, target5, target6, target7)) {\n"
+"      u32 idx = atomic_inc(result_count);\n"
+"      if (idx < max_results) {\n"
+"        u32 base = idx * 9U;\n"
+"        matches[base] = nonce;\n"
+"        for (int i = 0; i < 8; ++i) matches[base + 1U + (u32)i] = out[i];\n"
+"      }\n"
 "    }\n"
 "  }\n"
 "}\n";
@@ -131,6 +195,16 @@ static void set_error(char *error, size_t error_size, const char *message, cl_in
 
 static uint32_t config_u32_or(uint32_t value, uint32_t fallback) {
     return value == 0 ? fallback : value;
+}
+
+static uint32_t clamp_nonces_per_work_item(uint32_t value) {
+    if (value == 0) {
+        return OPENCL_DEFAULT_NONCES_PER_WORK_ITEM;
+    }
+    if (value > OPENCL_MAX_NONCES_PER_WORK_ITEM) {
+        return OPENCL_MAX_NONCES_PER_WORK_ITEM;
+    }
+    return value;
 }
 
 static int parse_opencl_version(const char *text, int *major, int *minor) {
@@ -303,6 +377,11 @@ static void opencl_device_config_apply_defaults(miner_opencl_device_config_t *de
     if (device->local_work_size == 0) {
         device->local_work_size = config->local_work_size;
     }
+    if (device->nonces_per_work_item == 0) {
+        device->nonces_per_work_item = clamp_nonces_per_work_item(config->nonces_per_work_item);
+    } else {
+        device->nonces_per_work_item = clamp_nonces_per_work_item(device->nonces_per_work_item);
+    }
 }
 
 int opencl_miner_resolve_devices(const miner_opencl_config_t *config,
@@ -328,6 +407,7 @@ int opencl_miner_resolve_devices(const miner_opencl_config_t *config,
         devices_out[0].device = config->device;
         devices_out[0].batch_size = config_u32_or(config->batch_size, OPENCL_DEFAULT_BATCH_SIZE);
         devices_out[0].local_work_size = config->local_work_size;
+        devices_out[0].nonces_per_work_item = clamp_nonces_per_work_item(config->nonces_per_work_item);
         devices_out[0].max_results = config_u32_or(config->max_results, OPENCL_DEFAULT_MAX_RESULTS);
         return 1;
     }
@@ -386,6 +466,7 @@ int opencl_miner_resolve_devices(const miner_opencl_config_t *config,
             devices_out[found].device = (int)d;
             devices_out[found].batch_size = config_u32_or(config->batch_size, OPENCL_DEFAULT_BATCH_SIZE);
             devices_out[found].local_work_size = config->local_work_size;
+            devices_out[found].nonces_per_work_item = clamp_nonces_per_work_item(config->nonces_per_work_item);
             devices_out[found].max_results = config_u32_or(config->max_results, OPENCL_DEFAULT_MAX_RESULTS);
             ++found;
         }
@@ -403,10 +484,10 @@ int opencl_miner_resolve_devices(const miner_opencl_config_t *config,
 
 static int build_program(opencl_miner_t *miner, char *error, size_t error_size) {
     cl_int rc = CL_SUCCESS;
-    const char *sources[] = {k_opencl_kernel, k_opencl_kernel_tail};
-    size_t lengths[] = {strlen(k_opencl_kernel), strlen(k_opencl_kernel_tail)};
+    const char *sources[] = {k_opencl_kernel, k_opencl_kernel_rounds, k_opencl_kernel_tail};
+    size_t lengths[] = {strlen(k_opencl_kernel), strlen(k_opencl_kernel_rounds), strlen(k_opencl_kernel_tail)};
 
-    miner->program = clCreateProgramWithSource(miner->context, 2, sources, lengths, &rc);
+    miner->program = clCreateProgramWithSource(miner->context, 3, sources, lengths, &rc);
     if (rc != CL_SUCCESS) {
         set_error(error, error_size, "failed to create OpenCL program", rc);
         return -1;
@@ -454,6 +535,9 @@ opencl_miner_t *opencl_miner_create(const miner_opencl_config_t *config,
 
     miner->batch_size = config != NULL ? config_u32_or(config->batch_size, OPENCL_DEFAULT_BATCH_SIZE) : OPENCL_DEFAULT_BATCH_SIZE;
     miner->local_work_size = config != NULL ? config->local_work_size : 0;
+    miner->nonces_per_work_item = config != NULL ?
+        clamp_nonces_per_work_item(config->nonces_per_work_item) :
+        OPENCL_DEFAULT_NONCES_PER_WORK_ITEM;
     miner->max_results = config != NULL ? config_u32_or(config->max_results, OPENCL_DEFAULT_MAX_RESULTS) : OPENCL_DEFAULT_MAX_RESULTS;
     if (miner->batch_size < 1024U) {
         miner->batch_size = 1024U;
@@ -563,6 +647,14 @@ void opencl_miner_destroy(opencl_miner_t *miner) {
 
 uint32_t opencl_miner_batch_size(const opencl_miner_t *miner) {
     return miner != NULL ? miner->batch_size : OPENCL_DEFAULT_BATCH_SIZE;
+}
+
+uint32_t opencl_miner_local_work_size(const opencl_miner_t *miner) {
+    return miner != NULL ? miner->local_work_size : 0U;
+}
+
+uint32_t opencl_miner_nonces_per_work_item(const opencl_miner_t *miner) {
+    return miner != NULL ? miner->nonces_per_work_item : OPENCL_DEFAULT_NONCES_PER_WORK_ITEM;
 }
 
 const char *opencl_miner_backend_name(const opencl_miner_t *miner) {
@@ -734,6 +826,9 @@ int opencl_miner_scan(opencl_miner_t *miner,
     if (miner == NULL || state == NULL || tail_words == NULL || target_words == NULL) {
         return -1;
     }
+    if (nonce_count == 0) {
+        return 0;
+    }
 
     uint32_t zero = 0;
     cl_int rc = clEnqueueWriteBuffer(miner->queue,
@@ -761,6 +856,7 @@ int opencl_miner_scan(opencl_miner_t *miner,
     rc |= clSetKernelArg(miner->kernel, arg++, sizeof(uint32_t), &tail_words[2]);
     rc |= clSetKernelArg(miner->kernel, arg++, sizeof(uint32_t), &start_nonce);
     rc |= clSetKernelArg(miner->kernel, arg++, sizeof(uint32_t), &nonce_count);
+    rc |= clSetKernelArg(miner->kernel, arg++, sizeof(uint32_t), &miner->nonces_per_work_item);
     rc |= clSetKernelArg(miner->kernel, arg++, sizeof(uint32_t), &miner->max_results);
     rc |= clSetKernelArg(miner->kernel, arg++, sizeof(miner->count_buf), &miner->count_buf);
     rc |= clSetKernelArg(miner->kernel, arg++, sizeof(miner->matches_buf), &miner->matches_buf);
@@ -768,7 +864,7 @@ int opencl_miner_scan(opencl_miner_t *miner,
         return -1;
     }
 
-    size_t global = nonce_count;
+    size_t global = ((size_t)nonce_count + miner->nonces_per_work_item - 1U) / miner->nonces_per_work_item;
     size_t local = miner->local_work_size;
     if (local > 0) {
         size_t rem = global % local;
@@ -785,10 +881,6 @@ int opencl_miner_scan(opencl_miner_t *miner,
                                 0,
                                 NULL,
                                 NULL);
-    if (rc != CL_SUCCESS) {
-        return -1;
-    }
-    rc = clFinish(miner->queue);
     if (rc != CL_SUCCESS) {
         return -1;
     }

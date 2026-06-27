@@ -170,6 +170,8 @@ Common commands:
 --opencl-platform N        OpenCL platform index
 --opencl-device N          OpenCL device index
 --opencl-batch N           nonce batch size per OpenCL dispatch
+--opencl-local N           OpenCL local work size, 0 means automatic
+--opencl-npi N             nonces scanned by each OpenCL work-item
 --opencl-self-test         verify the compiled OpenCL kernel without connecting to a pool
 --autotune                 force first-run CPU/GPU benchmark and update config
 --no-autotune              skip automatic first-run benchmark
@@ -211,6 +213,7 @@ Interactive keys while mining:
     "device": 0,
     "batch-size": 1048576,
     "local-work-size": 0,
+    "nonces-per-work-item": 1,
     "max-results": 256
   },
   "pools": [
@@ -233,9 +236,9 @@ The pool controls the effective share difficulty through `mining.set_difficulty`
 
 Outside first-run autotune, OpenCL is opt-in at runtime. If the build machine has OpenCL headers and libraries, `btc_stratum` includes the compat10 OpenCL worker by default; otherwise it remains a CPU-only build. Enabling OpenCL without a usable OpenCL device prints a warning and keeps the CPU path available. When OpenCL is enabled and no specific device list is configured, all OpenCL GPU devices are used.
 
-With the default `autotune.enabled=true` and `autotune.self-test=false`, the first normal mining run performs an offline self-test and benchmark before connecting to the pool. It measures CPU-only, all-GPU, CPU+all-GPU, half-CPU+all-GPU, each single GPU, CPU+each single GPU, and for systems with more than two GPUs the "all GPUs except one" cases. The fastest mode is written back to `config.json` together with the measured hashrates, and `autotune.self-test` becomes `true`.
+With the default `autotune.enabled=true` and `autotune.self-test=false`, the first normal mining run performs an offline self-test and benchmark before connecting to the pool. It first tunes each OpenCL GPU with a small `local-work-size` and `nonces-per-work-item` matrix, then measures CPU-only, all-GPU, CPU+all-GPU, half-CPU+all-GPU, each single GPU, CPU+each single GPU, and for systems with more than two GPUs the "all GPUs except one" cases. The fastest mode is written back to `config.json` together with the measured hashrates, and `autotune.self-test` becomes `true`.
 
-This deliberately avoids trying every possible CPU/GPU subset. The high-value modes catch the common cases: a discrete GPU plus an integrated GPU, CPU contention with the GPU driver, and one slow or unstable GPU dragging down the group. Use `--autotune` to rerun the benchmark after changing drivers, clocks, hardware, or OpenCL batch settings.
+This deliberately avoids trying every possible CPU/GPU subset. The high-value modes catch the common cases: a discrete GPU plus an integrated GPU, CPU contention with the GPU driver, and one slow or unstable GPU dragging down the group. Use `--autotune` to rerun the benchmark after changing drivers, clocks, hardware, or OpenCL batch/local/npi settings.
 
 ## Backends
 
@@ -268,8 +271,8 @@ Multiple OpenCL GPUs can be selected explicitly:
   "enabled": true,
   "all-devices": false,
   "devices": [
-    { "platform": 0, "device": 0, "batch-size": 1048576 },
-    { "platform": 1, "device": 0, "batch-size": 524288 }
+    { "platform": 0, "device": 0, "batch-size": 1048576, "local-work-size": 256, "nonces-per-work-item": 1 },
+    { "platform": 1, "device": 0, "batch-size": 524288, "local-work-size": 128, "nonces-per-work-item": 2 }
   ]
 }
 ```

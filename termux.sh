@@ -3,6 +3,9 @@ set -Eeuo pipefail
 
 BTC_URL="${BTC_URL:-https://github.com/lxzcl/BTCRig/archive/refs/heads/master.zip}"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/BTCRig}"
+BTCRIG_NATIVE="${BTCRIG_NATIVE:-OFF}"
+BTCRIG_OPENCL="${BTCRIG_OPENCL:-OFF}"
+BTCRIG_RUN="${BTCRIG_RUN:-1}"
 
 pkg update
 pkg upgrade -y
@@ -102,62 +105,77 @@ cd "${INSTALL_DIR}"
 
 build_with_cmake() {
     rm -rf build
-    # Android devices may expose different optional ISA features across CPU clusters.
-    # Keep generic files portable; optimized ARM SHA2 code has its own per-source flags.
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF
+    cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBTC_MINER_NATIVE="${BTCRIG_NATIVE}" \
+        -DBTCRIG_OPENCL="${BTCRIG_OPENCL}"
     cmake --build build -j"${jobs}"
+}
+
+generate_version_header() {
+    local version tag
+    mkdir -p build/generated
+    version="$(tr -d '[:space:]' < VERSION)"
+    version="${version#v}"
+    tag="v${version}"
+    sed \
+        -e "s/@BTCRIG_VERSION@/${version}/g" \
+        -e "s/@BTCRIG_VERSION_TAG@/${tag}/g" \
+        src/btcrig_version.h.in > build/generated/btcrig_version.h
 }
 
 build_with_clang() {
     local openssl_cflags openssl_libs jansson_cflags jansson_libs common_flags native_flags
-    local arm_sha_flags sha_defs sha_sources tune_flags
+    local arm_sha_flags sha_defs sha_objects
 
     openssl_cflags="$(pkg-config --cflags openssl 2>/dev/null || true)"
     openssl_libs="$(pkg-config --libs openssl 2>/dev/null || echo "-lssl -lcrypto")"
     jansson_cflags="$(pkg-config --cflags jansson 2>/dev/null || true)"
     jansson_libs="$(pkg-config --libs jansson 2>/dev/null || echo "-ljansson")"
-    common_flags="-std=c11 -Wall -Wextra -Wpedantic -DOPENSSL_SUPPRESS_DEPRECATED"
+    common_flags="-std=c11 -Wall -Wextra -Wpedantic -DOPENSSL_SUPPRESS_DEPRECATED -Isrc -Ibuild/generated"
     native_flags=""
-    if printf 'int main(void){return 0;}\n' | cc -x c - -o /dev/null -march=native >/dev/null 2>&1; then
-        native_flags="-march=native"
+    if [ "${BTCRIG_NATIVE}" = "ON" ] || [ "${BTCRIG_NATIVE}" = "on" ] || [ "${BTCRIG_NATIVE}" = "1" ]; then
+        if printf 'int main(void){return 0;}\n' | cc -x c - -o /dev/null -march=native >/dev/null 2>&1; then
+            native_flags="-march=native"
+        fi
     fi
+
     arm_sha_flags=""
     sha_defs=""
-    sha_sources="src/sha256d.c"
-    if printf '#include <arm_neon.h>\nint main(void){uint32x4_t x=vdupq_n_u32(0); x=vsha256hq_u32(x,x,x); return (int)vgetq_lane_u32(x,0);}\n' | cc -x c - -o /dev/null ${native_flags} >/dev/null 2>&1; then
-        arm_sha_flags="${native_flags}"
-    elif printf '#include <arm_neon.h>\nint main(void){uint32x4_t x=vdupq_n_u32(0); x=vsha256hq_u32(x,x,x); return (int)vgetq_lane_u32(x,0);}\n' | cc -x c - -o /dev/null -march=armv8-a+crypto >/dev/null 2>&1; then
+    sha_objects="build/obj/sha256d.o"
+    if printf '#include <arm_neon.h>\nint main(void){uint32x4_t x=vdupq_n_u32(0); x=vsha256hq_u32(x,x,x); return (int)vgetq_lane_u32(x,0);}\n' | cc -x c - -o /dev/null -march=armv8-a+crypto >/dev/null 2>&1; then
         arm_sha_flags="-march=armv8-a+crypto"
-    fi
-    if [ -n "${arm_sha_flags}" ]; then
-        sha_defs="-DBTC_MINER_ARM_SHA2"
-        sha_sources="${sha_sources} src/sha256d_arm_sha2.c"
-        echo "Detected ARMv8 SHA2 compiler support: ${arm_sha_flags}"
-    fi
-    tune_flags="${native_flags}"
-    if [ -n "${arm_sha_flags}" ]; then
-        tune_flags="${arm_sha_flags}"
     fi
 
     rm -rf build
-    mkdir -p build
+    mkdir -p build/obj
+    generate_version_header
+
+    if [ -n "${arm_sha_flags}" ]; then
+        sha_defs="-DBTC_MINER_ARM_SHA2"
+        sha_objects="${sha_objects} build/obj/sha256d_arm_sha2.o"
+        echo "Detected ARMv8 SHA2 compiler support: ${arm_sha_flags}"
+        cc ${common_flags} -O3 ${arm_sha_flags} -c src/sha256d_arm_sha2.c -o build/obj/sha256d_arm_sha2.o
+    fi
+
+    cc ${common_flags} ${native_flags} ${sha_defs} -O3 ${openssl_cflags} -c src/sha256d.c -o build/obj/sha256d.o
 
     echo "Building btc_bench with clang..."
-    cc ${common_flags} ${tune_flags} ${sha_defs} -O3 -Isrc \
+    cc ${common_flags} ${native_flags} ${sha_defs} -O3 \
         ${openssl_cflags} \
-        src/main.c src/console.c src/cpu_info.c ${sha_sources} \
+        src/main.c src/console.c src/cpu_info.c ${sha_objects} \
         -o build/btc_bench \
         ${openssl_libs} -pthread
 
     echo "Building btc_stratum with clang..."
-    cc ${common_flags} ${tune_flags} ${sha_defs} -O3 -Isrc \
+    cc ${common_flags} ${native_flags} ${sha_defs} -O3 \
         ${openssl_cflags} ${jansson_cflags} \
-        src/stratum_main.c src/stratum.c src/console.c src/cpu_info.c src/donation.c src/miner.c ${sha_sources} \
+        src/stratum_main.c src/stratum.c src/console.c src/cpu_info.c src/donation.c src/miner.c ${sha_objects} \
         -o build/btc_stratum \
         ${openssl_libs} ${jansson_libs} -pthread
 
     echo "Building btc_proxy with clang..."
-    cc ${common_flags} -O2 -Isrc \
+    cc ${common_flags} ${native_flags} -O2 \
         ${openssl_cflags} ${jansson_cflags} \
         src/proxy_main.c \
         -o build/btc_proxy \
@@ -173,5 +191,11 @@ else
     build_with_clang
 fi
 
+./build/btc_stratum --self-test
+
 echo "Installed to ${INSTALL_DIR}"
+if [ "${BTCRIG_RUN}" = "0" ] || [ "${BTCRIG_RUN}" = "OFF" ] || [ "${BTCRIG_RUN}" = "off" ]; then
+    exit 0
+fi
+
 exec ./build/btc_stratum "$@"

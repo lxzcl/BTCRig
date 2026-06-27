@@ -16,6 +16,7 @@
     "device": 0,
     "batch-size": 1048576,
     "local-work-size": 0,
+    "nonces-per-work-item": 1,
     "max-results": 256
   },
   "pools": [

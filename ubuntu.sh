@@ -3,6 +3,9 @@ set -Eeuo pipefail
 
 BTC_URL="${BTC_URL:-https://github.com/lxzcl/BTCRig/archive/refs/heads/master.zip}"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/BTCRig}"
+BTCRIG_NATIVE="${BTCRIG_NATIVE:-ON}"
+BTCRIG_OPENCL="${BTCRIG_OPENCL:-ON}"
+BTCRIG_RUN="${BTCRIG_RUN:-1}"
 
 if [ "$(id -u)" -eq 0 ]; then
     APT="apt"
@@ -12,6 +15,12 @@ fi
 
 $APT update
 $APT install -y build-essential cmake make pkg-config git libssl-dev libjansson-dev ca-certificates wget unzip
+
+if [ "${BTCRIG_OPENCL}" != "OFF" ] && [ "${BTCRIG_OPENCL}" != "off" ] && [ "${BTCRIG_OPENCL}" != "0" ]; then
+    if ! $APT install -y ocl-icd-opencl-dev opencl-headers clinfo; then
+        echo "OpenCL development packages were not installed; CMake will fall back to CPU-only if OpenCL is unavailable." >&2
+    fi
+fi
 
 tmp_dir="$(mktemp -d)"
 zip_path="${tmp_dir}/btc.zip"
@@ -77,8 +86,23 @@ find "${INSTALL_DIR}" -exec touch {} +
 
 cd "${INSTALL_DIR}"
 rm -rf build
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+cmake -S . -B build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBTC_MINER_NATIVE="${BTCRIG_NATIVE}" \
+    -DBTCRIG_OPENCL="${BTCRIG_OPENCL}"
 cmake --build build -j"${jobs}"
 
+./build/btc_stratum --self-test
+
+if [ "${BTCRIG_OPENCL}" != "OFF" ] && [ "${BTCRIG_OPENCL}" != "off" ] && [ "${BTCRIG_OPENCL}" != "0" ]; then
+    if command -v clinfo >/dev/null 2>&1; then
+        ./build/btc_stratum --opencl-self-test || true
+    fi
+fi
+
 echo "Installed to ${INSTALL_DIR}"
+if [ "${BTCRIG_RUN}" = "0" ] || [ "${BTCRIG_RUN}" = "OFF" ] || [ "${BTCRIG_RUN}" = "off" ]; then
+    exit 0
+fi
+
 exec ./build/btc_stratum "$@"

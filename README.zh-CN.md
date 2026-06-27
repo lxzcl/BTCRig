@@ -211,6 +211,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
     "device": 0,
     "batch-size": 1048576,
     "local-work-size": 0,
+    "nonces-per-work-item": 1,
     "max-results": 256
   },
   "pools": [
@@ -268,8 +269,8 @@ OpenCL 可以通过 `config.json` 或命令行启用：
   "enabled": true,
   "all-devices": false,
   "devices": [
-    { "platform": 0, "device": 0, "batch-size": 1048576 },
-    { "platform": 1, "device": 0, "batch-size": 524288 }
+    { "platform": 0, "device": 0, "batch-size": 1048576, "local-work-size": 256, "nonces-per-work-item": 1 },
+    { "platform": 1, "device": 0, "batch-size": 524288, "local-work-size": 128, "nonces-per-work-item": 2 }
   ]
 }
 ```
@@ -285,7 +286,7 @@ OpenCL compat10 路径避免使用 OpenCL 2.x API，主机端只使用 OpenCL 1.
 - [版本下载](https://github.com/lxzcl/BTCRig/releases)
 
 ## 捐赠
-软件默认包含 1% 开发者捐赠（约每 100 分钟捐赠 1 分钟），对所有挖矿模式生效。目前无法在代码层面中自动区分 PPLNS 矿池与 Solo 模式，矿池地址默认使用PPLNS，若使用 Solo 模式，请注意：存在极小概率在捐赠时段内找到区块，导致整个区块奖励被捐赠。如需修改捐赠比例，请编辑源码中的捐赠参数并重新编译。翻译成英文
+软件默认包含 1% 开发者捐赠（约每 100 分钟捐赠 1 分钟），对所有挖矿模式生效。目前无法在代码层面中自动区分 PPLNS 矿池与 Solo 模式，矿池地址默认使用PPLNS，若使用 Solo 模式，请注意：存在极小概率在捐赠时段内找到区块，导致整个区块奖励被捐赠。如需修改捐赠比例，请编辑源码中的捐赠参数并重新编译。
 BTC：bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
 
 ## 许可证

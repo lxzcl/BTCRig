@@ -19,20 +19,46 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
 cmake --build build -j"$(nproc)"
 ```
 
+Ubuntu / Debian one-step installer:
+
+```bash
+wget -O ubuntu.sh https://raw.githubusercontent.com/lxzcl/BTCRig/master/ubuntu.sh
+chmod +x ubuntu.sh
+./ubuntu.sh
+```
+
 Termux quick build:
 
 ```bash
 pkg update
 pkg install -y clang make cmake jsoncpp git openssl openssl-tool pkg-config libjansson wget unzip
 
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF -DBTCRIG_OPENCL=OFF
 cmake --build build -j"$(nproc)"
+```
+
+Termux one-step installer:
+
+```bash
+wget -O termux.sh https://raw.githubusercontent.com/lxzcl/BTCRig/master/termux.sh
+chmod +x termux.sh
+./termux.sh
+```
+
+Installer environment variables:
+
+```text
+BTC_URL         source zip URL, defaults to the master branch archive
+INSTALL_DIR     install directory, defaults to ~/BTCRig
+BTCRIG_NATIVE   ON/OFF native CPU tuning, Ubuntu default ON, Termux default OFF
+BTCRIG_OPENCL   ON/OFF OpenCL backend, Ubuntu default ON, Termux default OFF
+BTCRIG_RUN      1 runs btc_stratum after build, 0 only builds
 ```
 
 Default pool:
 
 ```text
-stratum+tls://public-pool.io:4333
+stratum+tls://public-pool.io:14333
 ```
 
 OpenCL note:

@@ -106,6 +106,7 @@ static int run_opencl_self_test(const miner_opencl_config_t *config) {
         device_config.device = devices[i].device;
         device_config.batch_size = devices[i].batch_size;
         device_config.local_work_size = devices[i].local_work_size;
+        device_config.nonces_per_work_item = devices[i].nonces_per_work_item;
         device_config.max_results = devices[i].max_results;
 
         opencl_self_test_result_t result;
@@ -400,6 +401,9 @@ static int load_config_file(app_config_t *config, const char *path, int required
         config->opencl.batch_size = json_u32_value(json_object_get(opencl, "batch_size"), config->opencl.batch_size);
         config->opencl.local_work_size = json_u32_value(json_object_get(opencl, "local-work-size"), config->opencl.local_work_size);
         config->opencl.local_work_size = json_u32_value(json_object_get(opencl, "local_work_size"), config->opencl.local_work_size);
+        config->opencl.nonces_per_work_item = json_u32_value(json_object_get(opencl, "nonces-per-work-item"), config->opencl.nonces_per_work_item);
+        config->opencl.nonces_per_work_item = json_u32_value(json_object_get(opencl, "nonces_per_work_item"), config->opencl.nonces_per_work_item);
+        config->opencl.nonces_per_work_item = json_u32_value(json_object_get(opencl, "npi"), config->opencl.nonces_per_work_item);
         config->opencl.max_results = json_u32_value(json_object_get(opencl, "max-results"), config->opencl.max_results);
         config->opencl.max_results = json_u32_value(json_object_get(opencl, "max_results"), config->opencl.max_results);
 
@@ -421,6 +425,9 @@ static int load_config_file(app_config_t *config, const char *path, int required
                 dst->batch_size = json_u32_value(json_object_get(device, "batch_size"), dst->batch_size);
                 dst->local_work_size = json_u32_value(json_object_get(device, "local-work-size"), config->opencl.local_work_size);
                 dst->local_work_size = json_u32_value(json_object_get(device, "local_work_size"), dst->local_work_size);
+                dst->nonces_per_work_item = json_u32_value(json_object_get(device, "nonces-per-work-item"), config->opencl.nonces_per_work_item);
+                dst->nonces_per_work_item = json_u32_value(json_object_get(device, "nonces_per_work_item"), dst->nonces_per_work_item);
+                dst->nonces_per_work_item = json_u32_value(json_object_get(device, "npi"), dst->nonces_per_work_item);
                 dst->max_results = json_u32_value(json_object_get(device, "max-results"), config->opencl.max_results);
                 dst->max_results = json_u32_value(json_object_get(device, "max_results"), dst->max_results);
                 ++config->opencl.device_count;
@@ -500,6 +507,7 @@ static void autotune_disable_opencl(miner_opencl_config_t *config) {
     config->enabled = 0;
 }
 
+#if defined(BTC_MINER_OPENCL)
 static void autotune_all_gpu_config(const miner_opencl_config_t *base, miner_opencl_config_t *out) {
     miner_opencl_config_defaults(out);
     if (base != NULL) {
@@ -529,6 +537,7 @@ static void autotune_device_list_config(const miner_opencl_config_t *base,
         out->device = out->devices[0].device;
     }
 }
+#endif
 
 static double autotune_run_mode(int cpu_threads,
                                 const miner_opencl_config_t *opencl,
@@ -577,6 +586,120 @@ static double autotune_run_mode(int cpu_threads,
     }
     return (double)(end_hashes - start_hashes) / elapsed;
 }
+
+#if defined(BTC_MINER_OPENCL)
+static int value_seen_u32(const uint32_t *values, int count, uint32_t value) {
+    for (int i = 0; i < count; ++i) {
+        if (values[i] == value) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void autotune_opencl_device_params(const miner_opencl_config_t *base,
+                                          miner_opencl_device_config_t *device,
+                                          int device_index,
+                                          double seconds) {
+    if (base == NULL || device == NULL) {
+        return;
+    }
+
+    const uint32_t local_candidates_raw[] = {
+        device->local_work_size,
+        base->local_work_size,
+        64U,
+        128U,
+        256U,
+        512U,
+    };
+    const uint32_t npi_candidates_raw[] = {
+        device->nonces_per_work_item,
+        base->nonces_per_work_item,
+        1U,
+        2U,
+        4U,
+    };
+    uint32_t local_candidates[sizeof(local_candidates_raw) / sizeof(local_candidates_raw[0])];
+    uint32_t npi_candidates[sizeof(npi_candidates_raw) / sizeof(npi_candidates_raw[0])];
+    int local_count = 0;
+    int npi_count = 0;
+
+    for (size_t i = 0; i < sizeof(local_candidates_raw) / sizeof(local_candidates_raw[0]); ++i) {
+        uint32_t value = local_candidates_raw[i];
+        if (!value_seen_u32(local_candidates, local_count, value)) {
+            local_candidates[local_count++] = value;
+        }
+    }
+    for (size_t i = 0; i < sizeof(npi_candidates_raw) / sizeof(npi_candidates_raw[0]); ++i) {
+        uint32_t value = npi_candidates_raw[i] == 0 ? 1U : npi_candidates_raw[i];
+        if (!value_seen_u32(npi_candidates, npi_count, value)) {
+            npi_candidates[npi_count++] = value;
+        }
+    }
+
+    miner_opencl_device_config_t best_device = *device;
+    double best_hashrate = 0.0;
+    int best_ok = 0;
+
+    printf("%s[AUTOTUNE]%s tuning gpu%d OpenCL local-work-size/npi\n",
+           C_CYAN,
+           C_RESET,
+           device_index);
+
+    for (int li = 0; li < local_count; ++li) {
+        for (int ni = 0; ni < npi_count; ++ni) {
+            miner_opencl_device_config_t candidate = *device;
+            miner_opencl_config_t opencl;
+            int ok = 0;
+
+            candidate.local_work_size = local_candidates[li];
+            candidate.nonces_per_work_item = npi_candidates[ni];
+            autotune_device_list_config(base, &candidate, 1, &opencl);
+
+            printf("%s[AUTOTUNE]%s testing gpu%d local=%u npi=%u\n",
+                   C_CYAN,
+                   C_RESET,
+                   device_index,
+                   candidate.local_work_size,
+                   candidate.nonces_per_work_item);
+            double hashrate = autotune_run_mode(0, &opencl, seconds, &ok);
+            if (ok) {
+                printf("%s[AUTOTUNE]%s gpu%d local=%u npi=%u hashrate=%.3f MH/s\n",
+                       C_CYAN,
+                       C_RESET,
+                       device_index,
+                       candidate.local_work_size,
+                       candidate.nonces_per_work_item,
+                       hashrate / 1000000.0);
+            } else {
+                printf("%s[AUTOTUNE]%s gpu%d local=%u npi=%u unavailable\n",
+                       C_YELLOW,
+                       C_RESET,
+                       device_index,
+                       candidate.local_work_size,
+                       candidate.nonces_per_work_item);
+            }
+            if (ok && (!best_ok || hashrate > best_hashrate)) {
+                best_ok = 1;
+                best_hashrate = hashrate;
+                best_device = candidate;
+            }
+        }
+    }
+
+    if (best_ok) {
+        *device = best_device;
+        printf("%s[AUTOTUNE]%s gpu%d selected local=%u npi=%u hashrate=%.3f MH/s\n",
+               C_BRIGHT_GREEN,
+               C_RESET,
+               device_index,
+               device->local_work_size,
+               device->nonces_per_work_item,
+               best_hashrate / 1000000.0);
+    }
+}
+#endif
 
 static const char *autotune_opencl_mode_name(const miner_opencl_config_t *opencl) {
     if (opencl == NULL || !opencl->enabled) {
@@ -696,6 +819,7 @@ static int save_autotune_config(const char *path,
     json_object_set_new(opencl, "device", json_integer(config->opencl.device));
     json_object_set_new(opencl, "batch-size", json_integer((json_int_t)config->opencl.batch_size));
     json_object_set_new(opencl, "local-work-size", json_integer((json_int_t)config->opencl.local_work_size));
+    json_object_set_new(opencl, "nonces-per-work-item", json_integer((json_int_t)config->opencl.nonces_per_work_item));
     json_object_set_new(opencl, "max-results", json_integer((json_int_t)config->opencl.max_results));
     if (config->opencl.enabled && config->opencl.device_count > 0) {
         json_t *devices = json_array();
@@ -715,6 +839,7 @@ static int save_autotune_config(const char *path,
             json_object_set_new(item, "device", json_integer(device->device));
             json_object_set_new(item, "batch-size", json_integer((json_int_t)device->batch_size));
             json_object_set_new(item, "local-work-size", json_integer((json_int_t)device->local_work_size));
+            json_object_set_new(item, "nonces-per-work-item", json_integer((json_int_t)device->nonces_per_work_item));
             json_object_set_new(item, "max-results", json_integer((json_int_t)device->max_results));
             json_array_append_new(devices, item);
         }
@@ -760,6 +885,9 @@ static int save_autotune_config(const char *path,
                     }
                     json_object_set_new(device_item, "platform", json_integer(device->platform));
                     json_object_set_new(device_item, "device", json_integer(device->device));
+                    json_object_set_new(device_item, "batch-size", json_integer((json_int_t)device->batch_size));
+                    json_object_set_new(device_item, "local-work-size", json_integer((json_int_t)device->local_work_size));
+                    json_object_set_new(device_item, "nonces-per-work-item", json_integer((json_int_t)device->nonces_per_work_item));
                     json_array_append_new(devices, device_item);
                 }
                 json_object_set_new(item, "devices", devices);
@@ -784,17 +912,11 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     autotune_result_t results[AUTOTUNE_MAX_RESULTS];
     int result_count = 0;
     miner_opencl_config_t cpu_only_opencl;
-    miner_opencl_config_t all_gpu_opencl;
-    miner_opencl_device_config_t resolved[MINER_OPENCL_MAX_DEVICES];
-    int resolved_count = 0;
-    char error[2048];
-    error[0] = '\0';
 
     int full_threads = config->thread_count > 0 ? config->thread_count : default_thread_count();
     if (full_threads < 0) {
         full_threads = 0;
     }
-    int half_threads = full_threads > 2 ? full_threads / 2 : (full_threads > 1 ? 1 : full_threads);
     double seconds = config->autotune_seconds > 0.0 ? config->autotune_seconds : DEFAULT_AUTOTUNE_SECONDS;
 
     printf("%s[AUTOTUNE]%s first-run benchmark seconds=%.1f strategy=cpu,gpu-all,cpu+gpu-all,single-gpu,drop-one\n",
@@ -808,6 +930,13 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     }
 
 #if defined(BTC_MINER_OPENCL)
+    miner_opencl_config_t all_gpu_opencl;
+    miner_opencl_device_config_t resolved[MINER_OPENCL_MAX_DEVICES];
+    int resolved_count = 0;
+    int half_threads = full_threads > 2 ? full_threads / 2 : (full_threads > 1 ? 1 : full_threads);
+    char error[2048];
+    error[0] = '\0';
+
     autotune_all_gpu_config(&config->opencl, &all_gpu_opencl);
     resolved_count = opencl_miner_resolve_devices(&all_gpu_opencl,
                                                   resolved,
@@ -820,6 +949,12 @@ static int run_autotune(app_config_t *config, const char *config_path) {
                C_RESET,
                error[0] != '\0' ? error : "no OpenCL GPU devices found");
     } else {
+        for (int i = 0; i < resolved_count; ++i) {
+            autotune_opencl_device_params(&config->opencl, &resolved[i], i, seconds);
+        }
+
+        autotune_device_list_config(&config->opencl, resolved, resolved_count, &all_gpu_opencl);
+
         autotune_append_result(results, &result_count, "all-gpu", 0, &all_gpu_opencl, seconds);
         if (full_threads > 0) {
             autotune_append_result(results, &result_count, "cpu+all-gpu", full_threads, &all_gpu_opencl, seconds);
@@ -920,7 +1055,8 @@ static void usage(const char *argv0) {
     printf("  %s [-c config.json] [-o stratum+tls://host:port] [-u wallet.worker] [-p password] [-d difficulty]\n", argv0);
     printf("     [-t threads] [-r retries] [--runtime seconds] [--stats seconds]\n");
     printf("     [--reconnect-delay seconds] [--donate-level N] [--no-mine]\n");
-    printf("     [--no-cpu] [--opencl] [--opencl-all] [--opencl-platform N] [--opencl-device N] [--opencl-batch N]\n");
+    printf("     [--no-cpu] [--opencl] [--opencl-all] [--opencl-platform N] [--opencl-device N]\n");
+    printf("     [--opencl-batch N] [--opencl-local N] [--opencl-npi N]\n");
     printf("     [--autotune] [--no-autotune] [--autotune-seconds N]\n");
     printf("\nDefaults:\n");
     printf("  version: %s\n", BTCRIG_VERSION_TAG);
@@ -1095,6 +1231,12 @@ int main(int argc, char **argv) {
             worker_override = 1;
         } else if (strcmp(argv[i], "--opencl-batch") == 0 && i + 1 < argc) {
             app_config.opencl.batch_size = (uint32_t)strtoul(argv[++i], NULL, 10);
+            worker_override = 1;
+        } else if (strcmp(argv[i], "--opencl-local") == 0 && i + 1 < argc) {
+            app_config.opencl.local_work_size = (uint32_t)strtoul(argv[++i], NULL, 10);
+            worker_override = 1;
+        } else if ((strcmp(argv[i], "--opencl-npi") == 0 || strcmp(argv[i], "--opencl-nonces-per-work-item") == 0) && i + 1 < argc) {
+            app_config.opencl.nonces_per_work_item = (uint32_t)strtoul(argv[++i], NULL, 10);
             worker_override = 1;
         } else if (strcmp(argv[i], "--autotune") == 0) {
             app_config.autotune_enabled = 1;

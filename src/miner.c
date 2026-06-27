@@ -26,6 +26,7 @@
 
 #define MINER_BATCH_SIZE 262144U
 #define MINER_OPENCL_DEFAULT_BATCH_SIZE 1048576U
+#define MINER_OPENCL_DEFAULT_NONCES_PER_WORK_ITEM 1U
 #define MINER_OPENCL_DEFAULT_MAX_RESULTS 256U
 #define SHARE_QUEUE_SIZE 256
 
@@ -501,6 +502,7 @@ void miner_opencl_config_defaults(miner_opencl_config_t *config) {
     config->device = 0;
     config->batch_size = MINER_OPENCL_DEFAULT_BATCH_SIZE;
     config->local_work_size = 0;
+    config->nonces_per_work_item = MINER_OPENCL_DEFAULT_NONCES_PER_WORK_ITEM;
     config->max_results = MINER_OPENCL_DEFAULT_MAX_RESULTS;
 }
 
@@ -520,6 +522,8 @@ static void opencl_device_to_config(const miner_opencl_config_t *base,
         out->device = device->device;
         out->batch_size = device->batch_size != 0 ? device->batch_size : out->batch_size;
         out->local_work_size = device->local_work_size != 0 ? device->local_work_size : out->local_work_size;
+        out->nonces_per_work_item = device->nonces_per_work_item != 0 ?
+            device->nonces_per_work_item : out->nonces_per_work_item;
         out->max_results = device->max_results != 0 ? device->max_results : out->max_results;
     }
 }
@@ -618,6 +622,9 @@ miner_t *miner_create_with_options(int thread_count, const miner_opencl_config_t
         if (miner->opencl_config.batch_size == 0) {
             miner->opencl_config.batch_size = MINER_OPENCL_DEFAULT_BATCH_SIZE;
         }
+        if (miner->opencl_config.nonces_per_work_item == 0) {
+            miner->opencl_config.nonces_per_work_item = MINER_OPENCL_DEFAULT_NONCES_PER_WORK_ITEM;
+        }
         if (miner->opencl_config.max_results == 0) {
             miner->opencl_config.max_results = MINER_OPENCL_DEFAULT_MAX_RESULTS;
         }
@@ -707,7 +714,7 @@ int miner_start(miner_t *miner) {
 
                     int slot = miner->opencl_started++;
                     miner->opencl_devices[slot] = opencl;
-                    printf("%s[OPENCL]%s #%d platform=%d device=%d backend=%s self-test=ok device=%s%s%s version=%s batch=%u\n",
+                    printf("%s[OPENCL]%s #%d platform=%d device=%d backend=%s self-test=ok device=%s%s%s version=%s batch=%u local=%u npi=%u\n",
                            C_CYAN,
                            C_RESET,
                            slot,
@@ -718,7 +725,9 @@ int miner_start(miner_t *miner) {
                            opencl_miner_device_name(opencl),
                            C_RESET,
                            opencl_miner_device_version(opencl),
-                           opencl_miner_batch_size(opencl));
+                           opencl_miner_batch_size(opencl),
+                           opencl_miner_local_work_size(opencl),
+                           opencl_miner_nonces_per_work_item(opencl));
                 }
             }
         }
