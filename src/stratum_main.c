@@ -8,6 +8,7 @@
 #include "btcrig_version.h"
 
 #include <jansson.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,7 +52,9 @@ typedef struct {
     int retries;
     int reconnect_delay;
     int thread_count;
+    int cpu_enabled;
     int enable_mining;
+    miner_opencl_config_t opencl;
     double runtime_seconds;
     double stats_interval;
     int donate_level;
@@ -202,7 +205,9 @@ static void app_config_set_defaults(app_config_t *config) {
     config->retries = DEFAULT_RETRIES;
     config->reconnect_delay = DEFAULT_RECONNECT_DELAY;
     config->thread_count = 0;
+    config->cpu_enabled = 1;
     config->enable_mining = 1;
+    miner_opencl_config_defaults(&config->opencl);
     config->runtime_seconds = 0.0;
     config->stats_interval = DEFAULT_STATS_INTERVAL;
     config->donate_level = DONATION_DEFAULT_LEVEL;
@@ -217,6 +222,17 @@ static int json_bool_value(json_t *value, int fallback) {
 
 static int json_int_value(json_t *value, int fallback) {
     return json_is_integer(value) ? (int)json_integer_value(value) : fallback;
+}
+
+static uint32_t json_u32_value(json_t *value, uint32_t fallback) {
+    if (!json_is_integer(value)) {
+        return fallback;
+    }
+    json_int_t parsed = json_integer_value(value);
+    if (parsed < 0 || parsed > UINT32_MAX) {
+        return fallback;
+    }
+    return (uint32_t)parsed;
 }
 
 static double json_number_value_or(json_t *value, double fallback) {
@@ -253,8 +269,21 @@ static int load_config_file(app_config_t *config, const char *path, int required
 
     json_t *cpu = json_object_get(root, "cpu");
     if (json_is_object(cpu)) {
-        config->enable_mining = json_bool_value(json_object_get(cpu, "enabled"), config->enable_mining);
+        config->cpu_enabled = json_bool_value(json_object_get(cpu, "enabled"), config->cpu_enabled);
         config->thread_count = json_int_value(json_object_get(cpu, "threads"), config->thread_count);
+    }
+
+    json_t *opencl = json_object_get(root, "opencl");
+    if (json_is_object(opencl)) {
+        config->opencl.enabled = json_bool_value(json_object_get(opencl, "enabled"), config->opencl.enabled);
+        config->opencl.platform = json_int_value(json_object_get(opencl, "platform"), config->opencl.platform);
+        config->opencl.device = json_int_value(json_object_get(opencl, "device"), config->opencl.device);
+        config->opencl.batch_size = json_u32_value(json_object_get(opencl, "batch-size"), config->opencl.batch_size);
+        config->opencl.batch_size = json_u32_value(json_object_get(opencl, "batch_size"), config->opencl.batch_size);
+        config->opencl.local_work_size = json_u32_value(json_object_get(opencl, "local-work-size"), config->opencl.local_work_size);
+        config->opencl.local_work_size = json_u32_value(json_object_get(opencl, "local_work_size"), config->opencl.local_work_size);
+        config->opencl.max_results = json_u32_value(json_object_get(opencl, "max-results"), config->opencl.max_results);
+        config->opencl.max_results = json_u32_value(json_object_get(opencl, "max_results"), config->opencl.max_results);
     }
 
     config->thread_count = json_int_value(json_object_get(root, "threads"), config->thread_count);
@@ -328,6 +357,7 @@ static void usage(const char *argv0) {
     printf("  %s [-c config.json] [-o stratum+tls://host:port] [-u wallet.worker] [-p password] [-d difficulty]\n", argv0);
     printf("     [-t threads] [-r retries] [--runtime seconds] [--stats seconds]\n");
     printf("     [--reconnect-delay seconds] [--donate-level N] [--no-mine]\n");
+    printf("     [--no-cpu] [--opencl] [--opencl-platform N] [--opencl-device N] [--opencl-batch N]\n");
     printf("\nDefaults:\n");
     printf("  version: %s\n", BTCRIG_VERSION_TAG);
     printf("  agent: %s\n", BTCRIG_USER_AGENT);
@@ -339,6 +369,7 @@ static void usage(const char *argv0) {
     printf("  reconnect-delay: %d..%d seconds\n", DEFAULT_RECONNECT_DELAY, MAX_RECONNECT_DELAY);
     printf("  stats: %.1f seconds\n", DEFAULT_STATS_INTERVAL);
     printf("  threads: auto (%d recommended)\n", default_thread_count());
+    printf("  opencl: disabled by default, OpenCL 1.2-or-older compatible path when compiled in\n");
     printf("  donate-level: %d%% (%s)\n",
            DONATION_DEFAULT_LEVEL,
            DONATION_DEFAULT_LEVEL == 0 ? "disabled" : "minutes per 100 minutes");
@@ -457,6 +488,7 @@ int main(int argc, char **argv) {
             app_config.retries = atoi(argv[++i]);
         } else if ((strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--threads") == 0) && i + 1 < argc) {
             app_config.thread_count = atoi(argv[++i]);
+            app_config.cpu_enabled = 1;
         } else if (strcmp(argv[i], "--runtime") == 0 && i + 1 < argc) {
             app_config.runtime_seconds = strtod(argv[++i], NULL);
         } else if (strcmp(argv[i], "--stats") == 0 && i + 1 < argc) {
@@ -467,6 +499,16 @@ int main(int argc, char **argv) {
             app_config_set_donate_level(&app_config, atoi(argv[++i]), "command-line");
         } else if (strcmp(argv[i], "--no-mine") == 0) {
             app_config.enable_mining = 0;
+        } else if (strcmp(argv[i], "--no-cpu") == 0) {
+            app_config.cpu_enabled = 0;
+        } else if (strcmp(argv[i], "--opencl") == 0) {
+            app_config.opencl.enabled = 1;
+        } else if (strcmp(argv[i], "--opencl-platform") == 0 && i + 1 < argc) {
+            app_config.opencl.platform = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--opencl-device") == 0 && i + 1 < argc) {
+            app_config.opencl.device = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--opencl-batch") == 0 && i + 1 < argc) {
+            app_config.opencl.batch_size = (uint32_t)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             usage(argv[0]);
             return 0;
@@ -480,8 +522,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "%s[CONFIG]%s no pools configured\n", C_BRIGHT_RED, C_RESET);
         return 1;
     }
-    if (app_config.thread_count <= 0) {
+    if (app_config.cpu_enabled && app_config.thread_count <= 0) {
         app_config.thread_count = default_thread_count();
+    }
+    if (!app_config.cpu_enabled) {
+        app_config.thread_count = 0;
     }
     if (app_config.reconnect_delay < 0) {
         app_config.reconnect_delay = DEFAULT_RECONNECT_DELAY;
@@ -499,14 +544,19 @@ int main(int argc, char **argv) {
 
     print_sha_backend_summary();
 
-    printf("%s[CONFIG]%s pools=%d threads=%s%d%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
+    int worker_enabled = app_config.cpu_enabled || app_config.opencl.enabled;
+    int mining_enabled = app_config.enable_mining && worker_enabled;
+
+    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
            C_CYAN,
            C_RESET,
            app_config.pool_count,
+           app_config.cpu_enabled ? "on" : "off",
            C_BRIGHT_GREEN,
            app_config.thread_count,
            C_RESET,
-           app_config.enable_mining ? "yes" : "no",
+           app_config.opencl.enabled ? "on" : "off",
+           mining_enabled ? "yes" : "no",
            app_config.reconnect_delay,
            MAX_RECONNECT_DELAY,
            app_config.stats_interval,
@@ -517,7 +567,7 @@ int main(int argc, char **argv) {
     int last_rc = 0;
     int pool_index = 0;
     int donating = 0;
-    int donation_enabled = app_config.enable_mining && app_config.donate_level > 0;
+    int donation_enabled = mining_enabled && app_config.donate_level > 0;
     double phase_seconds = donation_enabled ?
         donation_initial_user_seconds(app_config.donate_level) : 0.0;
 
@@ -560,7 +610,8 @@ int main(int argc, char **argv) {
 
         stratum_client_config_t config = {
             .thread_count = app_config.thread_count,
-            .enable_mining = app_config.enable_mining,
+            .enable_mining = mining_enabled,
+            .opencl = app_config.opencl,
             .stats_interval = app_config.stats_interval,
             .stop_at = stop_at,
             .session_seconds = phase_seconds,

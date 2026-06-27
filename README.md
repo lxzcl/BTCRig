@@ -8,7 +8,7 @@
 
 ![Release](https://img.shields.io/github/v/release/lxzcl/BTCRig?style=for-the-badge&color=00b894)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Termux-00b894?style=for-the-badge)
-![SHA256d](https://img.shields.io/badge/SHA256d-CPU-00b894?style=for-the-badge)
+![SHA256d](https://img.shields.io/badge/SHA256d-CPU%20%7C%20OpenCL-00b894?style=for-the-badge)
 
 </div>
 
@@ -25,6 +25,7 @@ BTCRig turns idle CPU resources on Windows, Linux, Android/Termux, x86 PCs, and 
 ## Highlights
 
 - Automatic backend selection: x86 SHA-NI, ARMv8 SHA2, OpenSSL, or portable C.
+- Optional OpenCL 1.2-or-older compatible scanning path for older GPU experiments; disabled by default.
 - Built for reusing heterogeneous idle devices instead of leaving their CPU capacity unused.
 - Two-lane interleaved x86 SHA-NI scanning and dedicated ARMv8 SHA2 range scanning.
 - Uses every logical CPU by default; thread count remains configurable.
@@ -86,6 +87,14 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-jansson \
   mingw-w64-ucrt-x86_64-pkgconf \
   git make
+```
+
+Optional OpenCL build support:
+
+```bash
+pacman -S --needed \
+  mingw-w64-ucrt-x86_64-opencl-headers \
+  mingw-w64-ucrt-x86_64-opencl-icd
 ```
 
 If `pacman -Syu` asks you to close the terminal, reopen the UCRT64 terminal before continuing. Build and test all three programs:
@@ -155,6 +164,11 @@ Common commands:
 --runtime N                runtime limit, 0 means unlimited
 --donate-level N           donation percentage, default 0
 --no-mine                  test the connection without mining
+--no-cpu                   disable CPU workers
+--opencl                   enable the optional OpenCL worker
+--opencl-platform N        OpenCL platform index
+--opencl-device N          OpenCL device index
+--opencl-batch N           nonce batch size per OpenCL dispatch
 --cpu-info                 print CPU topology
 --self-test                run the Stratum parser self-test
 ```
@@ -179,6 +193,14 @@ Interactive keys while mining:
     "enabled": true,
     "threads": 0
   },
+  "opencl": {
+    "enabled": false,
+    "platform": 0,
+    "device": 0,
+    "batch-size": 1048576,
+    "local-work-size": 0,
+    "max-results": 256
+  },
   "pools": [
     {
       "url": "stratum+tls://public-pool.io:14333",
@@ -197,6 +219,8 @@ Interactive keys while mining:
 
 The pool controls the effective share difficulty through `mining.set_difficulty`; `diff` is only an initial suggestion.
 
+OpenCL is intentionally opt-in. If the build machine has OpenCL headers and libraries, `btc_stratum` includes the OpenCL worker; otherwise it remains a CPU-only build. Enabling OpenCL without a usable OpenCL device prints a warning and keeps the CPU path available.
+
 ## Backends
 
 | Backend | Availability | Notes |
@@ -205,12 +229,22 @@ The pool controls the effective share difficulty through `mining.set_difficulty`
 | `arm-sha2` | ARMv8 CPU with SHA2 extensions | Dedicated ARM range scanner |
 | `openssl` | All supported builds | Library fallback |
 | `fast-c` | All supported builds | Portable C fallback |
+| `opencl` | Optional `btc_stratum` worker | Experimental OpenCL kernel for older GPU tests, disabled by default |
 
 Override automatic selection with `BTC_MINER_SHA_BACKEND`, for example:
 
 ```bash
 BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
 ```
+
+OpenCL can be enabled from `config.json` or from the command line:
+
+```bash
+./build/btc_stratum --opencl
+./build/btc_stratum --no-cpu --opencl --opencl-platform 0 --opencl-device 0
+```
+
+The OpenCL path avoids OpenCL 2.x APIs and is written for OpenCL 1.2-or-older compatibility. It is meant as a compatibility fallback for old GPU experiments, not as the default high-performance path.
 
 ## Documentation
 

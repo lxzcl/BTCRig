@@ -17,8 +17,12 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-openssl \
   mingw-w64-ucrt-x86_64-jansson \
   mingw-w64-ucrt-x86_64-pkgconf \
-  mingw-w64-ucrt-x86_64-ninja \
   git make
+
+# Optional OpenCL build support.
+pacman -S --needed \
+  mingw-w64-ucrt-x86_64-opencl-headers \
+  mingw-w64-ucrt-x86_64-opencl-icd
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
 cmake --build build -j$(nproc)
@@ -28,4 +32,13 @@ Default pool:
 
 ```text
 stratum+tls://public-pool.io:4333
+```
+
+OpenCL note:
+
+```text
+OpenCL support is optional and disabled in config.json by default. Install a GPU
+driver with OpenCL runtime and OpenCL development headers if you want CMake to
+compile the experimental OpenCL worker. CPU-only builds are unaffected when
+OpenCL is not found.
 ```

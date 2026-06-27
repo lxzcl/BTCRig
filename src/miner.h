@@ -7,6 +7,15 @@
 typedef struct miner miner_t;
 
 typedef struct {
+    int enabled;
+    int platform;
+    int device;
+    uint32_t batch_size;
+    uint32_t local_work_size;
+    uint32_t max_results;
+} miner_opencl_config_t;
+
+typedef struct {
     uint64_t seq;
     uint32_t nonce;
     double difficulty;
@@ -39,7 +48,9 @@ int miner_build_job(miner_job_t *out,
                     const char *extranonce2,
                     double difficulty);
 
+void miner_opencl_config_defaults(miner_opencl_config_t *config);
 miner_t *miner_create(int thread_count);
+miner_t *miner_create_with_options(int thread_count, const miner_opencl_config_t *opencl_config);
 void miner_destroy(miner_t *miner);
 int miner_start(miner_t *miner);
 void miner_stop(miner_t *miner);

@@ -1281,7 +1281,8 @@ int stratum_run_client(const char *url,
     double last_thread_time = last_stats_time;
     miner_t *miner = NULL;
     keyboard_input_t keyboard;
-    int thread_count = config != NULL && config->thread_count > 0 ? config->thread_count : 1;
+    int thread_count = config != NULL && config->thread_count >= 0 ? config->thread_count : 1;
+    int stat_worker_count = thread_count > 0 ? thread_count : 1;
     int enable_mining = config == NULL || config->enable_mining;
     double stats_interval = config != NULL ? config->stats_interval : 5.0;
     double stop_at = config != NULL ? config->stop_at : 0.0;
@@ -1317,7 +1318,8 @@ int stratum_run_client(const char *url,
     state.connected_at = monotonic_seconds();
     state.connect_count = 1;
     if (enable_mining) {
-        miner = miner_create(thread_count);
+        const miner_opencl_config_t *opencl_config = config != NULL ? &config->opencl : NULL;
+        miner = miner_create_with_options(thread_count, opencl_config);
         if (miner == NULL || miner_start(miner) != 0) {
             fprintf(stderr, "%s[MINER]%s failed to start\n", C_BRIGHT_RED, C_RESET);
             miner_destroy(miner);
@@ -1325,14 +1327,18 @@ int stratum_run_client(const char *url,
             return 1;
         }
         state.miner = miner;
-        last_thread_hashes = calloc((size_t)thread_count, sizeof(*last_thread_hashes));
+        stat_worker_count = miner_thread_count(miner);
+        if (stat_worker_count <= 0) {
+            stat_worker_count = 1;
+        }
+        last_thread_hashes = calloc((size_t)stat_worker_count, sizeof(*last_thread_hashes));
         if (last_thread_hashes == NULL) {
             fprintf(stderr, "%s[MINER]%s failed to allocate thread stats\n", C_BRIGHT_RED, C_RESET);
             miner_destroy(miner);
             conn_close(&conn);
             return 1;
         }
-        (void)miner_snapshot_thread_hashes(miner, last_thread_hashes, thread_count);
+        (void)miner_snapshot_thread_hashes(miner, last_thread_hashes, stat_worker_count);
     }
 
     memset(&reader, 0, sizeof(reader));
@@ -1368,7 +1374,7 @@ int stratum_run_client(const char *url,
             break;
         }
 
-        handle_keyboard_input(&state, &keyboard, last_thread_hashes, thread_count, &last_thread_time);
+        handle_keyboard_input(&state, &keyboard, last_thread_hashes, stat_worker_count, &last_thread_time);
 
         if (flush_shares(&state, &conn, user, &next_rpc_id) != 0) {
             fprintf(stderr, "[NET] submit failed, reconnecting\n");

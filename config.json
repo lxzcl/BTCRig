@@ -4,6 +4,14 @@
     "enabled": true,
     "threads": 0
   },
+  "opencl": {
+    "enabled": false,
+    "platform": 0,
+    "device": 0,
+    "batch-size": 1048576,
+    "local-work-size": 0,
+    "max-results": 256
+  },
   "pools": [
     {
       "url": "stratum+tls://public-pool.io:14333",
