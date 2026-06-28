@@ -2,7 +2,8 @@
   "autosave": true,
   "autotune": {
     "enabled": true,
-    "self-test": false,
+    "cpu-self-test": false,
+    "gpu-self-test": false,
     "seconds": 1.5
   },
   "cpu": {
@@ -17,6 +18,7 @@
     "batch-size": 1048576,
     "local-work-size": 0,
     "nonces-per-work-item": 1,
+    "kernel": "auto",
     "max-results": 256
   },
   "pools": [

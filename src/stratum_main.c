@@ -61,7 +61,8 @@ typedef struct {
     int enable_mining;
     int autosave;
     int autotune_enabled;
-    int autotune_done;
+    int cpu_autotune_done;
+    int gpu_autotune_done;
     miner_opencl_config_t opencl;
     double runtime_seconds;
     double stats_interval;
@@ -108,6 +109,7 @@ static int run_opencl_self_test(const miner_opencl_config_t *config) {
         device_config.local_work_size = devices[i].local_work_size;
         device_config.nonces_per_work_item = devices[i].nonces_per_work_item;
         device_config.max_results = devices[i].max_results;
+        device_config.kernel_variant = devices[i].kernel_variant;
 
         opencl_self_test_result_t result;
         error[0] = '\0';
@@ -296,6 +298,51 @@ static void copy_string(char *dst, size_t dst_size, const char *src) {
     snprintf(dst, dst_size, "%s", src);
 }
 
+static char ascii_tolower_char(char ch) {
+    if (ch >= 'A' && ch <= 'Z') {
+        return (char)(ch - 'A' + 'a');
+    }
+    return ch;
+}
+
+static int string_equals_ci(const char *a, const char *b) {
+    if (a == NULL || b == NULL) {
+        return 0;
+    }
+    while (*a != '\0' && *b != '\0') {
+        if (ascii_tolower_char(*a) != ascii_tolower_char(*b)) {
+            return 0;
+        }
+        ++a;
+        ++b;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+static const char *opencl_kernel_variant_name(int variant) {
+    switch (variant) {
+    case MINER_OPENCL_KERNEL_COMPACT:
+        return "compact";
+    case MINER_OPENCL_KERNEL_UNROLLED:
+        return "unrolled";
+    default:
+        return "auto";
+    }
+}
+
+static int parse_opencl_kernel_variant(const char *value, int fallback) {
+    if (value == NULL || value[0] == '\0' || string_equals_ci(value, "auto")) {
+        return MINER_OPENCL_KERNEL_AUTO;
+    }
+    if (string_equals_ci(value, "compact")) {
+        return MINER_OPENCL_KERNEL_COMPACT;
+    }
+    if (string_equals_ci(value, "unrolled")) {
+        return MINER_OPENCL_KERNEL_UNROLLED;
+    }
+    return fallback;
+}
+
 static void app_config_set_defaults(app_config_t *config) {
     memset(config, 0, sizeof(*config));
     config->pool_count = 1;
@@ -310,7 +357,8 @@ static void app_config_set_defaults(app_config_t *config) {
     config->enable_mining = 1;
     config->autosave = 1;
     config->autotune_enabled = 1;
-    config->autotune_done = 0;
+    config->cpu_autotune_done = 0;
+    config->gpu_autotune_done = 0;
     miner_opencl_config_defaults(&config->opencl);
     config->runtime_seconds = 0.0;
     config->stats_interval = DEFAULT_STATS_INTERVAL;
@@ -344,6 +392,53 @@ static double json_number_value_or(json_t *value, double fallback) {
     return json_is_number(value) ? json_number_value(value) : fallback;
 }
 
+static json_t *json_load_file_allow_bom(const char *path, json_error_t *error) {
+    json_t *root = json_load_file(path, 0, error);
+    if (root != NULL) {
+        return root;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (fp == NULL) {
+        return NULL;
+    }
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+    long file_size = ftell(fp);
+    if (file_size < 3 || fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+
+    char *buffer = malloc((size_t)file_size);
+    if (buffer == NULL) {
+        fclose(fp);
+        return NULL;
+    }
+    size_t read_size = fread(buffer, 1, (size_t)file_size, fp);
+    fclose(fp);
+    if (read_size != (size_t)file_size) {
+        free(buffer);
+        return NULL;
+    }
+
+    const unsigned char *bytes = (const unsigned char *)buffer;
+    if (read_size < 3 || bytes[0] != 0xefU || bytes[1] != 0xbbU || bytes[2] != 0xbfU) {
+        free(buffer);
+        return NULL;
+    }
+
+    json_error_t bom_error;
+    root = json_loadb(buffer + 3, read_size - 3, 0, &bom_error);
+    free(buffer);
+    if (root == NULL && error != NULL) {
+        *error = bom_error;
+    }
+    return root;
+}
+
 static void app_config_set_donate_level(app_config_t *config, int level, const char *source) {
     if (donation_level_valid(level)) {
         config->donate_level = level;
@@ -360,7 +455,7 @@ static void app_config_set_donate_level(app_config_t *config, int level, const c
 
 static int load_config_file(app_config_t *config, const char *path, int required) {
     json_error_t error;
-    json_t *root = json_load_file(path, 0, &error);
+    json_t *root = json_load_file_allow_bom(path, &error);
     if (root == NULL) {
         if (required) {
             fprintf(stderr, "%s[CONFIG]%s failed to load %s line=%d col=%d: %s\n",
@@ -377,10 +472,16 @@ static int load_config_file(app_config_t *config, const char *path, int required
     json_t *autotune = json_object_get(root, "autotune");
     if (json_is_object(autotune)) {
         config->autotune_enabled = json_bool_value(json_object_get(autotune, "enabled"), config->autotune_enabled);
-        config->autotune_done = json_bool_value(json_object_get(autotune, "self-test"), config->autotune_done);
-        config->autotune_done = json_bool_value(json_object_get(autotune, "self_test"), config->autotune_done);
-        config->autotune_done = json_bool_value(json_object_get(autotune, "done"), config->autotune_done);
-        config->autotune_done = json_bool_value(json_object_get(autotune, "completed"), config->autotune_done);
+        config->cpu_autotune_done = json_bool_value(json_object_get(autotune, "self-test"), config->cpu_autotune_done);
+        config->cpu_autotune_done = json_bool_value(json_object_get(autotune, "self_test"), config->cpu_autotune_done);
+        config->cpu_autotune_done = json_bool_value(json_object_get(autotune, "done"), config->cpu_autotune_done);
+        config->cpu_autotune_done = json_bool_value(json_object_get(autotune, "completed"), config->cpu_autotune_done);
+        config->cpu_autotune_done = json_bool_value(json_object_get(autotune, "cpu-self-test"), config->cpu_autotune_done);
+        config->cpu_autotune_done = json_bool_value(json_object_get(autotune, "cpu_self_test"), config->cpu_autotune_done);
+        config->gpu_autotune_done = json_bool_value(json_object_get(autotune, "gpu-self-test"), config->gpu_autotune_done);
+        config->gpu_autotune_done = json_bool_value(json_object_get(autotune, "gpu_self_test"), config->gpu_autotune_done);
+        config->gpu_autotune_done = json_bool_value(json_object_get(autotune, "opencl-self-test"), config->gpu_autotune_done);
+        config->gpu_autotune_done = json_bool_value(json_object_get(autotune, "opencl_self_test"), config->gpu_autotune_done);
         config->autotune_seconds = json_number_value_or(json_object_get(autotune, "seconds"), config->autotune_seconds);
     }
 
@@ -406,6 +507,12 @@ static int load_config_file(app_config_t *config, const char *path, int required
         config->opencl.nonces_per_work_item = json_u32_value(json_object_get(opencl, "npi"), config->opencl.nonces_per_work_item);
         config->opencl.max_results = json_u32_value(json_object_get(opencl, "max-results"), config->opencl.max_results);
         config->opencl.max_results = json_u32_value(json_object_get(opencl, "max_results"), config->opencl.max_results);
+        config->opencl.kernel_variant = parse_opencl_kernel_variant(json_string_value(json_object_get(opencl, "kernel")),
+                                                                    config->opencl.kernel_variant);
+        config->opencl.kernel_variant = parse_opencl_kernel_variant(json_string_value(json_object_get(opencl, "kernel-variant")),
+                                                                    config->opencl.kernel_variant);
+        config->opencl.kernel_variant = parse_opencl_kernel_variant(json_string_value(json_object_get(opencl, "kernel_variant")),
+                                                                    config->opencl.kernel_variant);
 
         json_t *devices = json_object_get(opencl, "devices");
         if (json_is_array(devices)) {
@@ -430,6 +537,12 @@ static int load_config_file(app_config_t *config, const char *path, int required
                 dst->nonces_per_work_item = json_u32_value(json_object_get(device, "npi"), dst->nonces_per_work_item);
                 dst->max_results = json_u32_value(json_object_get(device, "max-results"), config->opencl.max_results);
                 dst->max_results = json_u32_value(json_object_get(device, "max_results"), dst->max_results);
+                dst->kernel_variant = parse_opencl_kernel_variant(json_string_value(json_object_get(device, "kernel")),
+                                                                  config->opencl.kernel_variant);
+                dst->kernel_variant = parse_opencl_kernel_variant(json_string_value(json_object_get(device, "kernel-variant")),
+                                                                  dst->kernel_variant);
+                dst->kernel_variant = parse_opencl_kernel_variant(json_string_value(json_object_get(device, "kernel_variant")),
+                                                                  dst->kernel_variant);
                 ++config->opencl.device_count;
             }
         }
@@ -597,6 +710,15 @@ static int value_seen_u32(const uint32_t *values, int count, uint32_t value) {
     return 0;
 }
 
+static int autotune_hashrate_is_better(double candidate, double best) {
+    const double threshold = 1.02;
+
+    if (best <= 0.0) {
+        return 1;
+    }
+    return candidate > best * threshold;
+}
+
 static void autotune_opencl_device_params(const miner_opencl_config_t *base,
                                           miner_opencl_device_config_t *device,
                                           int device_index,
@@ -620,10 +742,28 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
         2U,
         4U,
     };
+    const uint32_t batch_candidates_raw[] = {
+        device->batch_size,
+        base->batch_size,
+        524288U,
+        1048576U,
+        2097152U,
+        4194304U,
+    };
+    const int kernel_candidates_raw[] = {
+        device->kernel_variant,
+        base->kernel_variant,
+        MINER_OPENCL_KERNEL_UNROLLED,
+        MINER_OPENCL_KERNEL_COMPACT,
+    };
     uint32_t local_candidates[sizeof(local_candidates_raw) / sizeof(local_candidates_raw[0])];
     uint32_t npi_candidates[sizeof(npi_candidates_raw) / sizeof(npi_candidates_raw[0])];
+    uint32_t batch_candidates[sizeof(batch_candidates_raw) / sizeof(batch_candidates_raw[0])];
+    uint32_t kernel_candidates[sizeof(kernel_candidates_raw) / sizeof(kernel_candidates_raw[0])];
     int local_count = 0;
     int npi_count = 0;
+    int batch_count = 0;
+    int kernel_count = 0;
 
     for (size_t i = 0; i < sizeof(local_candidates_raw) / sizeof(local_candidates_raw[0]); ++i) {
         uint32_t value = local_candidates_raw[i];
@@ -637,67 +777,155 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
             npi_candidates[npi_count++] = value;
         }
     }
+    for (size_t i = 0; i < sizeof(batch_candidates_raw) / sizeof(batch_candidates_raw[0]); ++i) {
+        uint32_t value = batch_candidates_raw[i] < 1024U ? 1024U : batch_candidates_raw[i];
+        if (!value_seen_u32(batch_candidates, batch_count, value)) {
+            batch_candidates[batch_count++] = value;
+        }
+    }
+    for (size_t i = 0; i < sizeof(kernel_candidates_raw) / sizeof(kernel_candidates_raw[0]); ++i) {
+        uint32_t value = (uint32_t)(kernel_candidates_raw[i] == MINER_OPENCL_KERNEL_COMPACT ?
+            MINER_OPENCL_KERNEL_COMPACT : MINER_OPENCL_KERNEL_UNROLLED);
+        if (!value_seen_u32(kernel_candidates, kernel_count, value)) {
+            kernel_candidates[kernel_count++] = value;
+        }
+    }
 
     miner_opencl_device_config_t best_device = *device;
     double best_hashrate = 0.0;
     int best_ok = 0;
 
-    printf("%s[AUTOTUNE]%s tuning gpu%d OpenCL local-work-size/npi\n",
+    printf("%s[AUTOTUNE]%s tuning gpu%d OpenCL kernel/local-work-size/npi\n",
            C_CYAN,
            C_RESET,
            device_index);
 
-    for (int li = 0; li < local_count; ++li) {
-        for (int ni = 0; ni < npi_count; ++ni) {
+    for (int ki = 0; ki < kernel_count; ++ki) {
+        for (int li = 0; li < local_count; ++li) {
+            for (int ni = 0; ni < npi_count; ++ni) {
             miner_opencl_device_config_t candidate = *device;
             miner_opencl_config_t opencl;
             int ok = 0;
 
+            candidate.kernel_variant = (int)kernel_candidates[ki];
             candidate.local_work_size = local_candidates[li];
             candidate.nonces_per_work_item = npi_candidates[ni];
+            candidate.batch_size = best_device.batch_size;
             autotune_device_list_config(base, &candidate, 1, &opencl);
 
-            printf("%s[AUTOTUNE]%s testing gpu%d local=%u npi=%u\n",
+            printf("%s[AUTOTUNE]%s testing gpu%d kernel=%s batch=%u local=%u npi=%u\n",
                    C_CYAN,
                    C_RESET,
                    device_index,
+                   opencl_kernel_variant_name(candidate.kernel_variant),
+                   candidate.batch_size,
                    candidate.local_work_size,
                    candidate.nonces_per_work_item);
             double hashrate = autotune_run_mode(0, &opencl, seconds, &ok);
             if (ok) {
-                printf("%s[AUTOTUNE]%s gpu%d local=%u npi=%u hashrate=%.3f MH/s\n",
+                printf("%s[AUTOTUNE]%s gpu%d kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
                        C_CYAN,
                        C_RESET,
                        device_index,
+                       opencl_kernel_variant_name(candidate.kernel_variant),
+                       candidate.batch_size,
                        candidate.local_work_size,
                        candidate.nonces_per_work_item,
                        hashrate / 1000000.0);
             } else {
-                printf("%s[AUTOTUNE]%s gpu%d local=%u npi=%u unavailable\n",
+                printf("%s[AUTOTUNE]%s gpu%d kernel=%s batch=%u local=%u npi=%u unavailable\n",
                        C_YELLOW,
                        C_RESET,
                        device_index,
+                       opencl_kernel_variant_name(candidate.kernel_variant),
+                       candidate.batch_size,
                        candidate.local_work_size,
                        candidate.nonces_per_work_item);
             }
-            if (ok && (!best_ok || hashrate > best_hashrate)) {
+            if (ok && (!best_ok || autotune_hashrate_is_better(hashrate, best_hashrate))) {
                 best_ok = 1;
                 best_hashrate = hashrate;
                 best_device = candidate;
             }
         }
+        }
     }
 
     if (best_ok) {
         *device = best_device;
-        printf("%s[AUTOTUNE]%s gpu%d selected local=%u npi=%u hashrate=%.3f MH/s\n",
+        printf("%s[AUTOTUNE]%s gpu%d selected kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
                C_BRIGHT_GREEN,
                C_RESET,
                device_index,
+               opencl_kernel_variant_name(device->kernel_variant),
+               device->batch_size,
                device->local_work_size,
                device->nonces_per_work_item,
                best_hashrate / 1000000.0);
     }
+
+    if (!best_ok) {
+        return;
+    }
+
+    printf("%s[AUTOTUNE]%s tuning gpu%d OpenCL batch-size\n",
+           C_CYAN,
+           C_RESET,
+           device_index);
+
+    for (int bi = 0; bi < batch_count; ++bi) {
+        miner_opencl_device_config_t candidate = *device;
+        miner_opencl_config_t opencl;
+        int ok = 0;
+
+        candidate.batch_size = batch_candidates[bi];
+        autotune_device_list_config(base, &candidate, 1, &opencl);
+
+        printf("%s[AUTOTUNE]%s testing gpu%d kernel=%s batch=%u local=%u npi=%u\n",
+               C_CYAN,
+               C_RESET,
+               device_index,
+               opencl_kernel_variant_name(candidate.kernel_variant),
+               candidate.batch_size,
+               candidate.local_work_size,
+               candidate.nonces_per_work_item);
+        double hashrate = autotune_run_mode(0, &opencl, seconds, &ok);
+        if (ok) {
+            printf("%s[AUTOTUNE]%s gpu%d kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
+                   C_CYAN,
+                   C_RESET,
+                   device_index,
+                   opencl_kernel_variant_name(candidate.kernel_variant),
+                   candidate.batch_size,
+                   candidate.local_work_size,
+                   candidate.nonces_per_work_item,
+                   hashrate / 1000000.0);
+        } else {
+            printf("%s[AUTOTUNE]%s gpu%d kernel=%s batch=%u local=%u npi=%u unavailable\n",
+                   C_YELLOW,
+                   C_RESET,
+                   device_index,
+                   opencl_kernel_variant_name(candidate.kernel_variant),
+                   candidate.batch_size,
+                   candidate.local_work_size,
+                   candidate.nonces_per_work_item);
+        }
+        if (ok && autotune_hashrate_is_better(hashrate, best_hashrate)) {
+            best_hashrate = hashrate;
+            best_device = candidate;
+            *device = best_device;
+        }
+    }
+
+    printf("%s[AUTOTUNE]%s gpu%d final kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
+           C_BRIGHT_GREEN,
+           C_RESET,
+           device_index,
+           opencl_kernel_variant_name(device->kernel_variant),
+           device->batch_size,
+           device->local_work_size,
+           device->nonces_per_work_item,
+           best_hashrate / 1000000.0);
 }
 #endif
 
@@ -788,7 +1016,7 @@ static int save_autotune_config(const char *path,
     }
 
     json_error_t error;
-    json_t *root = json_load_file(path, 0, &error);
+    json_t *root = json_load_file_allow_bom(path, &error);
     if (root != NULL && !json_is_object(root)) {
         json_decref(root);
         root = NULL;
@@ -821,6 +1049,7 @@ static int save_autotune_config(const char *path,
     json_object_set_new(opencl, "local-work-size", json_integer((json_int_t)config->opencl.local_work_size));
     json_object_set_new(opencl, "nonces-per-work-item", json_integer((json_int_t)config->opencl.nonces_per_work_item));
     json_object_set_new(opencl, "max-results", json_integer((json_int_t)config->opencl.max_results));
+    json_object_set_new(opencl, "kernel", json_string(opencl_kernel_variant_name(config->opencl.kernel_variant)));
     if (config->opencl.enabled && config->opencl.device_count > 0) {
         json_t *devices = json_array();
         if (devices == NULL) {
@@ -841,6 +1070,7 @@ static int save_autotune_config(const char *path,
             json_object_set_new(item, "local-work-size", json_integer((json_int_t)device->local_work_size));
             json_object_set_new(item, "nonces-per-work-item", json_integer((json_int_t)device->nonces_per_work_item));
             json_object_set_new(item, "max-results", json_integer((json_int_t)device->max_results));
+            json_object_set_new(item, "kernel", json_string(opencl_kernel_variant_name(device->kernel_variant)));
             json_array_append_new(devices, item);
         }
         json_object_set_new(opencl, "devices", devices);
@@ -849,7 +1079,12 @@ static int save_autotune_config(const char *path,
     }
 
     json_object_set_new(autotune, "enabled", config->autotune_enabled ? json_true() : json_false());
-    json_object_set_new(autotune, "self-test", config->autotune_done ? json_true() : json_false());
+    json_object_set_new(autotune, "cpu-self-test", config->cpu_autotune_done ? json_true() : json_false());
+    json_object_set_new(autotune, "gpu-self-test", config->gpu_autotune_done ? json_true() : json_false());
+    json_object_del(autotune, "self-test");
+    json_object_del(autotune, "self_test");
+    json_object_del(autotune, "done");
+    json_object_del(autotune, "completed");
     json_object_set_new(autotune, "seconds", json_real(config->autotune_seconds));
     if (best != NULL) {
         json_object_set_new(autotune, "selected", json_string(best->name));
@@ -888,6 +1123,7 @@ static int save_autotune_config(const char *path,
                     json_object_set_new(device_item, "batch-size", json_integer((json_int_t)device->batch_size));
                     json_object_set_new(device_item, "local-work-size", json_integer((json_int_t)device->local_work_size));
                     json_object_set_new(device_item, "nonces-per-work-item", json_integer((json_int_t)device->nonces_per_work_item));
+                    json_object_set_new(device_item, "kernel", json_string(opencl_kernel_variant_name(device->kernel_variant)));
                     json_array_append_new(devices, device_item);
                 }
                 json_object_set_new(item, "devices", devices);
@@ -919,10 +1155,13 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     }
     double seconds = config->autotune_seconds > 0.0 ? config->autotune_seconds : DEFAULT_AUTOTUNE_SECONDS;
 
-    printf("%s[AUTOTUNE]%s first-run benchmark seconds=%.1f strategy=cpu,gpu-all,cpu+gpu-all,single-gpu,drop-one\n",
+    int tune_opencl = config->opencl.enabled;
+
+    printf("%s[AUTOTUNE]%s first-run benchmark seconds=%.1f strategy=%s\n",
            C_CYAN,
            C_RESET,
-           seconds);
+           seconds,
+           tune_opencl ? "cpu,gpu-all,cpu+gpu-all,single-gpu,drop-one" : "cpu-only");
 
     autotune_disable_opencl(&cpu_only_opencl);
     if (full_threads > 0) {
@@ -930,68 +1169,74 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     }
 
 #if defined(BTC_MINER_OPENCL)
-    miner_opencl_config_t all_gpu_opencl;
-    miner_opencl_device_config_t resolved[MINER_OPENCL_MAX_DEVICES];
-    int resolved_count = 0;
-    int half_threads = full_threads > 2 ? full_threads / 2 : (full_threads > 1 ? 1 : full_threads);
-    char error[2048];
-    error[0] = '\0';
-
-    autotune_all_gpu_config(&config->opencl, &all_gpu_opencl);
-    resolved_count = opencl_miner_resolve_devices(&all_gpu_opencl,
-                                                  resolved,
-                                                  MINER_OPENCL_MAX_DEVICES,
-                                                  error,
-                                                  sizeof(error));
-    if (resolved_count <= 0) {
-        printf("%s[AUTOTUNE]%s OpenCL skipped: %s\n",
+    if (!tune_opencl) {
+        printf("%s[AUTOTUNE]%s OpenCL skipped: disabled in config; set opencl.enabled=true or use --opencl to benchmark GPU modes\n",
                C_YELLOW,
-               C_RESET,
-               error[0] != '\0' ? error : "no OpenCL GPU devices found");
+               C_RESET);
     } else {
-        for (int i = 0; i < resolved_count; ++i) {
-            autotune_opencl_device_params(&config->opencl, &resolved[i], i, seconds);
-        }
+        miner_opencl_config_t all_gpu_opencl;
+        miner_opencl_device_config_t resolved[MINER_OPENCL_MAX_DEVICES];
+        int resolved_count = 0;
+        int half_threads = full_threads > 2 ? full_threads / 2 : (full_threads > 1 ? 1 : full_threads);
+        char error[2048];
+        error[0] = '\0';
 
-        autotune_device_list_config(&config->opencl, resolved, resolved_count, &all_gpu_opencl);
-
-        autotune_append_result(results, &result_count, "all-gpu", 0, &all_gpu_opencl, seconds);
-        if (full_threads > 0) {
-            autotune_append_result(results, &result_count, "cpu+all-gpu", full_threads, &all_gpu_opencl, seconds);
-            if (half_threads > 0 && half_threads != full_threads) {
-                autotune_append_result(results, &result_count, "half-cpu+all-gpu", half_threads, &all_gpu_opencl, seconds);
+        autotune_all_gpu_config(&config->opencl, &all_gpu_opencl);
+        resolved_count = opencl_miner_resolve_devices(&all_gpu_opencl,
+                                                      resolved,
+                                                      MINER_OPENCL_MAX_DEVICES,
+                                                      error,
+                                                      sizeof(error));
+        if (resolved_count <= 0) {
+            printf("%s[AUTOTUNE]%s OpenCL skipped: %s\n",
+                   C_YELLOW,
+                   C_RESET,
+                   error[0] != '\0' ? error : "no OpenCL GPU devices found");
+        } else {
+            for (int i = 0; i < resolved_count; ++i) {
+                autotune_opencl_device_params(&config->opencl, &resolved[i], i, seconds);
             }
-        }
 
-        for (int i = 0; i < resolved_count; ++i) {
-            miner_opencl_config_t device_opencl;
-            char name[96];
-            autotune_device_list_config(&config->opencl, &resolved[i], 1, &device_opencl);
-            snprintf(name, sizeof(name), "gpu%d", i);
-            autotune_append_result(results, &result_count, name, 0, &device_opencl, seconds);
+            autotune_device_list_config(&config->opencl, resolved, resolved_count, &all_gpu_opencl);
+
+            autotune_append_result(results, &result_count, "all-gpu", 0, &all_gpu_opencl, seconds);
             if (full_threads > 0) {
-                snprintf(name, sizeof(name), "cpu+gpu%d", i);
-                autotune_append_result(results, &result_count, name, full_threads, &device_opencl, seconds);
-            }
-        }
-
-        if (resolved_count > 2) {
-            for (int skip = 0; skip < resolved_count; ++skip) {
-                miner_opencl_device_config_t subset[MINER_OPENCL_MAX_DEVICES];
-                int subset_count = 0;
-                char name[96];
-                for (int i = 0; i < resolved_count; ++i) {
-                    if (i != skip) {
-                        subset[subset_count++] = resolved[i];
-                    }
+                autotune_append_result(results, &result_count, "cpu+all-gpu", full_threads, &all_gpu_opencl, seconds);
+                if (half_threads > 0 && half_threads != full_threads) {
+                    autotune_append_result(results, &result_count, "half-cpu+all-gpu", half_threads, &all_gpu_opencl, seconds);
                 }
-                miner_opencl_config_t subset_opencl;
-                autotune_device_list_config(&config->opencl, subset, subset_count, &subset_opencl);
-                snprintf(name, sizeof(name), "all-gpu-minus-gpu%d", skip);
-                autotune_append_result(results, &result_count, name, 0, &subset_opencl, seconds);
+            }
+
+            for (int i = 0; i < resolved_count; ++i) {
+                miner_opencl_config_t device_opencl;
+                char name[96];
+                autotune_device_list_config(&config->opencl, &resolved[i], 1, &device_opencl);
+                snprintf(name, sizeof(name), "gpu%d", i);
+                autotune_append_result(results, &result_count, name, 0, &device_opencl, seconds);
                 if (full_threads > 0) {
-                    snprintf(name, sizeof(name), "cpu+all-gpu-minus-gpu%d", skip);
-                    autotune_append_result(results, &result_count, name, full_threads, &subset_opencl, seconds);
+                    snprintf(name, sizeof(name), "cpu+gpu%d", i);
+                    autotune_append_result(results, &result_count, name, full_threads, &device_opencl, seconds);
+                }
+            }
+
+            if (resolved_count > 2) {
+                for (int skip = 0; skip < resolved_count; ++skip) {
+                    miner_opencl_device_config_t subset[MINER_OPENCL_MAX_DEVICES];
+                    int subset_count = 0;
+                    char name[96];
+                    for (int i = 0; i < resolved_count; ++i) {
+                        if (i != skip) {
+                            subset[subset_count++] = resolved[i];
+                        }
+                    }
+                    miner_opencl_config_t subset_opencl;
+                    autotune_device_list_config(&config->opencl, subset, subset_count, &subset_opencl);
+                    snprintf(name, sizeof(name), "all-gpu-minus-gpu%d", skip);
+                    autotune_append_result(results, &result_count, name, 0, &subset_opencl, seconds);
+                    if (full_threads > 0) {
+                        snprintf(name, sizeof(name), "cpu+all-gpu-minus-gpu%d", skip);
+                        autotune_append_result(results, &result_count, name, full_threads, &subset_opencl, seconds);
+                    }
                 }
             }
         }
@@ -1001,9 +1246,17 @@ static int run_autotune(app_config_t *config, const char *config_path) {
 #endif
 
     const autotune_result_t *best = NULL;
+    int cpu_autotune_ok = 0;
+    int gpu_autotune_ok = 0;
     for (int i = 0; i < result_count; ++i) {
         if (!results[i].ok) {
             continue;
+        }
+        if (results[i].cpu_threads > 0) {
+            cpu_autotune_ok = 1;
+        }
+        if (results[i].opencl.enabled) {
+            gpu_autotune_ok = 1;
         }
         if (best == NULL || results[i].hashrate > best->hashrate) {
             best = &results[i];
@@ -1017,7 +1270,12 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     config->cpu_enabled = best->cpu_threads > 0 ? 1 : 0;
     config->thread_count = best->cpu_threads;
     config->opencl = best->opencl;
-    config->autotune_done = 1;
+    if (cpu_autotune_ok) {
+        config->cpu_autotune_done = 1;
+    }
+    if (gpu_autotune_ok) {
+        config->gpu_autotune_done = 1;
+    }
 
     printf("%s[AUTOTUNE]%s selected mode=%s%s%s hashrate=%.3f MH/s cpu-threads=%d opencl=%s\n",
            C_BRIGHT_GREEN,
@@ -1035,6 +1293,25 @@ static int run_autotune(app_config_t *config, const char *config_path) {
         printf("%s[AUTOTUNE]%s autosave=false; result kept for this run only\n", C_YELLOW, C_RESET);
     }
     return 0;
+}
+
+enum {
+    APP_AUTOTUNE_REQUIRED_CPU = 1 << 0,
+    APP_AUTOTUNE_REQUIRED_GPU = 1 << 1
+};
+
+static int app_config_autotune_required(const app_config_t *config) {
+    if (config == NULL || !config->autotune_enabled || !config->enable_mining) {
+        return 0;
+    }
+    int required = 0;
+    if (config->cpu_enabled && config->thread_count > 0 && !config->cpu_autotune_done) {
+        required |= APP_AUTOTUNE_REQUIRED_CPU;
+    }
+    if (config->opencl.enabled && !config->gpu_autotune_done) {
+        required |= APP_AUTOTUNE_REQUIRED_GPU;
+    }
+    return required;
 }
 
 static const char *find_config_arg(int argc, char **argv) {
@@ -1056,7 +1333,7 @@ static void usage(const char *argv0) {
     printf("     [-t threads] [-r retries] [--runtime seconds] [--stats seconds]\n");
     printf("     [--reconnect-delay seconds] [--donate-level N] [--no-mine]\n");
     printf("     [--no-cpu] [--opencl] [--opencl-all] [--opencl-platform N] [--opencl-device N]\n");
-    printf("     [--opencl-batch N] [--opencl-local N] [--opencl-npi N]\n");
+    printf("     [--opencl-batch N] [--opencl-local N] [--opencl-npi N] [--opencl-kernel auto|compact|unrolled]\n");
     printf("     [--autotune] [--no-autotune] [--autotune-seconds N]\n");
     printf("\nDefaults:\n");
     printf("  version: %s\n", BTCRIG_VERSION_TAG);
@@ -1071,7 +1348,8 @@ static void usage(const char *argv0) {
     printf("  threads: auto (%d recommended)\n", default_thread_count());
     printf("  opencl: manual enable uses all OpenCL GPU devices unless a device is selected; autotune may select it\n");
     printf("  opencl compat10: OpenCL 1.0/1.1 compatible, requires global int32 atomics on 1.0 devices\n");
-    printf("  autotune: enabled by default; first run benchmarks CPU/GPU modes and saves the fastest mode when autosave=true\n");
+    printf("  opencl kernel: auto prefers unrolled and can fall back to compact; autotune tests compact and unrolled\n");
+    printf("  autotune: enabled by default; GPU modes are benchmarked only when OpenCL is enabled\n");
     printf("  donate-level: %d%% (%s)\n",
            DONATION_DEFAULT_LEVEL,
            DONATION_DEFAULT_LEVEL == 0 ? "disabled" : "minutes per 100 minutes");
@@ -1238,9 +1516,20 @@ int main(int argc, char **argv) {
         } else if ((strcmp(argv[i], "--opencl-npi") == 0 || strcmp(argv[i], "--opencl-nonces-per-work-item") == 0) && i + 1 < argc) {
             app_config.opencl.nonces_per_work_item = (uint32_t)strtoul(argv[++i], NULL, 10);
             worker_override = 1;
+        } else if (strcmp(argv[i], "--opencl-kernel") == 0 && i + 1 < argc) {
+            int parsed = parse_opencl_kernel_variant(argv[++i], -1);
+            if (parsed < 0) {
+                fprintf(stderr, "%s[CONFIG]%s invalid --opencl-kernel, use auto, compact, or unrolled\n",
+                        C_BRIGHT_RED,
+                        C_RESET);
+                return 2;
+            }
+            app_config.opencl.kernel_variant = parsed;
+            worker_override = 1;
         } else if (strcmp(argv[i], "--autotune") == 0) {
             app_config.autotune_enabled = 1;
-            app_config.autotune_done = 0;
+            app_config.cpu_autotune_done = 0;
+            app_config.gpu_autotune_done = 0;
             force_autotune = 1;
         } else if (strcmp(argv[i], "--no-autotune") == 0) {
             app_config.autotune_enabled = 0;
@@ -1284,8 +1573,9 @@ int main(int argc, char **argv) {
         app_config.autotune_seconds = 0.25;
     }
 
-    if (app_config.autotune_enabled && !app_config.autotune_done && app_config.enable_mining) {
-        if (worker_override && !force_autotune) {
+    int autotune_required = app_config_autotune_required(&app_config);
+    if (autotune_required != 0) {
+        if (worker_override && !force_autotune && (autotune_required & APP_AUTOTUNE_REQUIRED_GPU) == 0) {
             printf("%s[AUTOTUNE]%s skipped because worker options were set on the command line; use --autotune to force\n",
                    C_YELLOW,
                    C_RESET);
