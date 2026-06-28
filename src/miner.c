@@ -5,6 +5,10 @@
 #include "console.h"
 #include "sha256d.h"
 
+#if defined(BTC_MINER_OPENCL)
+#include "opencl_miner.h"
+#endif
+
 #include <errno.h>
 #include <math.h>
 #include <openssl/sha.h>
@@ -21,8 +25,13 @@
 #endif
 
 #define MINER_BATCH_SIZE 262144U
+#define MINER_MIXED_CPU_BATCH_SIZE 65536U
+#define MINER_OPENCL_DEFAULT_BATCH_SIZE 1048576U
+#define MINER_OPENCL_DEFAULT_NONCES_PER_WORK_ITEM 1U
+#define MINER_OPENCL_DEFAULT_MAX_RESULTS 256U
 #define SHARE_QUEUE_SIZE 256
 
+#if defined(BTC_MINER_OPENCL)
 static void miner_sleep_ms(unsigned int ms) {
 #if defined(_WIN32)
     Sleep(ms);
@@ -30,6 +39,7 @@ static void miner_sleep_ms(unsigned int ms) {
     usleep(ms * 1000U);
 #endif
 }
+#endif
 
 typedef struct {
     miner_job_t public_job;
@@ -41,11 +51,19 @@ typedef struct {
 
 struct miner {
     pthread_mutex_t lock;
+    pthread_cond_t work_cond;
     pthread_t *threads;
+#if defined(BTC_MINER_OPENCL)
+    pthread_t *opencl_threads;
+    opencl_miner_t **opencl_devices;
+    uint64_t *opencl_hashes;
+#endif
     int thread_count;
     int started;
+    int opencl_started;
     int stop;
     int paused;
+    miner_opencl_config_t opencl_config;
 
     active_job_t job;
     uint64_t next_nonce;
@@ -63,6 +81,14 @@ typedef struct {
     miner_t *miner;
     int id;
 } worker_arg_t;
+
+#if defined(BTC_MINER_OPENCL)
+typedef struct {
+    miner_t *miner;
+    opencl_miner_t *opencl;
+    int id;
+} opencl_worker_arg_t;
+#endif
 
 static int hex_value(char c) {
     if (c >= '0' && c <= '9') {
@@ -358,11 +384,57 @@ static void queue_share_locked(miner_t *miner, const miner_job_t *job, uint32_t 
     ++miner->share_count;
 }
 
+static int copy_job_and_nonce_range_sized(miner_t *miner,
+                                          active_job_t *job,
+                                          uint32_t *start_nonce,
+                                          uint32_t *count,
+                                          uint32_t batch_size);
+
 static int copy_job_and_nonce_range(miner_t *miner,
                                     active_job_t *job,
                                     uint32_t *start_nonce,
                                     uint32_t *count) {
+    uint32_t batch_size = MINER_BATCH_SIZE;
+#if defined(BTC_MINER_OPENCL)
+    if (miner != NULL && miner->opencl_started > 0) {
+        batch_size = MINER_MIXED_CPU_BATCH_SIZE;
+    }
+#endif
+    return copy_job_and_nonce_range_sized(miner, job, start_nonce, count, batch_size);
+}
+
+static uint32_t miner_cpu_batch_size(const miner_t *miner) {
+#if defined(BTC_MINER_OPENCL)
+    if (miner != NULL && miner->opencl_started > 0) {
+        return MINER_MIXED_CPU_BATCH_SIZE;
+    }
+#else
+    (void)miner;
+#endif
+    return MINER_BATCH_SIZE;
+}
+
+static void miner_wait_for_work(miner_t *miner) {
+    if (miner == NULL) {
+        return;
+    }
+
+    pthread_mutex_lock(&miner->lock);
+    while (!miner->stop && (miner->paused || !miner->job.valid)) {
+        pthread_cond_wait(&miner->work_cond, &miner->lock);
+    }
+    pthread_mutex_unlock(&miner->lock);
+}
+
+static int copy_job_and_nonce_range_sized(miner_t *miner,
+                                          active_job_t *job,
+                                          uint32_t *start_nonce,
+                                          uint32_t *count,
+                                          uint32_t batch_size) {
     int ok = 0;
+    if (batch_size == 0) {
+        batch_size = MINER_BATCH_SIZE;
+    }
     pthread_mutex_lock(&miner->lock);
     if (miner->job.valid) {
         if (miner->next_nonce > UINT32_MAX) {
@@ -370,7 +442,7 @@ static int copy_job_and_nonce_range(miner_t *miner,
             miner->nonce_exhausted = 1;
         } else {
             uint64_t remaining = (uint64_t)UINT32_MAX - miner->next_nonce + 1U;
-            uint32_t range = remaining < MINER_BATCH_SIZE ? (uint32_t)remaining : MINER_BATCH_SIZE;
+            uint32_t range = remaining < batch_size ? (uint32_t)remaining : batch_size;
             *job = miner->job;
             *start_nonce = (uint32_t)miner->next_nonce;
             *count = range;
@@ -420,7 +492,7 @@ static void *worker_main(void *opaque) {
             break;
         }
         if (paused) {
-            miner_sleep_ms(100);
+            miner_wait_for_work(miner);
             continue;
         }
 
@@ -428,7 +500,7 @@ static void *worker_main(void *opaque) {
         uint32_t start_nonce = 0;
         uint32_t nonce_count = 0;
         if (!copy_job_and_nonce_range(miner, &job, &start_nonce, &nonce_count)) {
-            miner_sleep_ms(100);
+            miner_wait_for_work(miner);
             continue;
         }
 
@@ -452,9 +524,113 @@ static void *worker_main(void *opaque) {
     return NULL;
 }
 
+void miner_opencl_config_defaults(miner_opencl_config_t *config) {
+    if (config == NULL) {
+        return;
+    }
+    memset(config, 0, sizeof(*config));
+    config->enabled = 0;
+    config->all_devices = 1;
+    config->platform = 0;
+    config->device = 0;
+    config->batch_size = MINER_OPENCL_DEFAULT_BATCH_SIZE;
+    config->local_work_size = 0;
+    config->nonces_per_work_item = MINER_OPENCL_DEFAULT_NONCES_PER_WORK_ITEM;
+    config->max_results = MINER_OPENCL_DEFAULT_MAX_RESULTS;
+    config->kernel_variant = MINER_OPENCL_KERNEL_AUTO;
+}
+
+#if defined(BTC_MINER_OPENCL)
+static void opencl_device_to_config(const miner_opencl_config_t *base,
+                                    const miner_opencl_device_config_t *device,
+                                    miner_opencl_config_t *out) {
+    miner_opencl_config_defaults(out);
+    if (base != NULL) {
+        *out = *base;
+    }
+    out->enabled = 1;
+    out->all_devices = 0;
+    out->device_count = 0;
+    if (device != NULL) {
+        out->platform = device->platform;
+        out->device = device->device;
+        out->batch_size = device->batch_size != 0 ? device->batch_size : out->batch_size;
+        out->local_work_size = device->local_work_size != 0 ? device->local_work_size : out->local_work_size;
+        out->nonces_per_work_item = device->nonces_per_work_item != 0 ?
+            device->nonces_per_work_item : out->nonces_per_work_item;
+        out->max_results = device->max_results != 0 ? device->max_results : out->max_results;
+        out->kernel_variant = device->kernel_variant != MINER_OPENCL_KERNEL_AUTO ?
+            device->kernel_variant : out->kernel_variant;
+    }
+}
+
+static void *opencl_worker_main(void *opaque) {
+    opencl_worker_arg_t *arg = (opencl_worker_arg_t *)opaque;
+    miner_t *miner = arg->miner;
+    opencl_miner_t *opencl = arg->opencl;
+    int id = arg->id;
+    uint32_t batch_size = opencl_miner_batch_size(opencl);
+
+    free(arg);
+
+    for (;;) {
+        pthread_mutex_lock(&miner->lock);
+        int stop = miner->stop;
+        int paused = miner->paused;
+        pthread_mutex_unlock(&miner->lock);
+        if (stop) {
+            break;
+        }
+        if (paused) {
+            miner_wait_for_work(miner);
+            continue;
+        }
+
+        active_job_t job;
+        uint32_t start_nonce = 0;
+        uint32_t nonce_count = 0;
+        if (!copy_job_and_nonce_range_sized(miner, &job, &start_nonce, &nonce_count, batch_size)) {
+            miner_wait_for_work(miner);
+            continue;
+        }
+
+        scan_match_context_t scan_context = {
+            .miner = miner,
+            .job = &job,
+        };
+
+        if (opencl_miner_scan(opencl,
+                              &job.midstate,
+                              job.tail_words,
+                              job.target_words,
+                              start_nonce,
+                              nonce_count,
+                              &scan_context,
+                              queue_scan_match) != 0) {
+            fprintf(stderr, "%s[OPENCL]%s scan failed; retrying\n", C_YELLOW, C_RESET);
+            miner_sleep_ms(250);
+            continue;
+        }
+
+        pthread_mutex_lock(&miner->lock);
+        miner->hashes += nonce_count;
+        if (id >= 0 && id < miner->opencl_started) {
+            miner->opencl_hashes[id] += nonce_count;
+        }
+        pthread_mutex_unlock(&miner->lock);
+    }
+
+    return NULL;
+}
+#endif
+
 miner_t *miner_create(int thread_count) {
-    if (thread_count <= 0) {
-        thread_count = 1;
+    return miner_create_with_options(thread_count, NULL);
+}
+
+miner_t *miner_create_with_options(int thread_count, const miner_opencl_config_t *opencl_config) {
+    if (thread_count < 0) {
+        thread_count = 0;
     }
 
     miner_t *miner = calloc(1, sizeof(*miner));
@@ -462,18 +638,38 @@ miner_t *miner_create(int thread_count) {
         return NULL;
     }
 
-    miner->threads = calloc((size_t)thread_count, sizeof(*miner->threads));
-    miner->thread_hashes = calloc((size_t)thread_count, sizeof(*miner->thread_hashes));
-    if (miner->threads == NULL || miner->thread_hashes == NULL) {
-        free(miner->thread_hashes);
-        free(miner->threads);
-        free(miner);
-        return NULL;
+    if (thread_count > 0) {
+        miner->threads = calloc((size_t)thread_count, sizeof(*miner->threads));
+        miner->thread_hashes = calloc((size_t)thread_count, sizeof(*miner->thread_hashes));
+        if (miner->threads == NULL || miner->thread_hashes == NULL) {
+            free(miner->thread_hashes);
+            free(miner->threads);
+            free(miner);
+            return NULL;
+        }
     }
 
     pthread_mutex_init(&miner->lock, NULL);
+    pthread_cond_init(&miner->work_cond, NULL);
     miner->thread_count = thread_count;
     miner->next_nonce = 0;
+    miner_opencl_config_defaults(&miner->opencl_config);
+    if (opencl_config != NULL) {
+        miner->opencl_config = *opencl_config;
+        if (miner->opencl_config.batch_size == 0) {
+            miner->opencl_config.batch_size = MINER_OPENCL_DEFAULT_BATCH_SIZE;
+        }
+        if (miner->opencl_config.nonces_per_work_item == 0) {
+            miner->opencl_config.nonces_per_work_item = MINER_OPENCL_DEFAULT_NONCES_PER_WORK_ITEM;
+        }
+        if (miner->opencl_config.max_results == 0) {
+            miner->opencl_config.max_results = MINER_OPENCL_DEFAULT_MAX_RESULTS;
+        }
+        if (miner->opencl_config.kernel_variant < MINER_OPENCL_KERNEL_AUTO ||
+            miner->opencl_config.kernel_variant > MINER_OPENCL_KERNEL_UNROLLED) {
+            miner->opencl_config.kernel_variant = MINER_OPENCL_KERNEL_AUTO;
+        }
+    }
     return miner;
 }
 
@@ -482,7 +678,13 @@ void miner_destroy(miner_t *miner) {
         return;
     }
     miner_stop(miner);
+    pthread_cond_destroy(&miner->work_cond);
     pthread_mutex_destroy(&miner->lock);
+#if defined(BTC_MINER_OPENCL)
+    free(miner->opencl_hashes);
+    free(miner->opencl_devices);
+    free(miner->opencl_threads);
+#endif
     free(miner->thread_hashes);
     free(miner->threads);
     free(miner);
@@ -491,6 +693,101 @@ void miner_destroy(miner_t *miner) {
 int miner_start(miner_t *miner) {
     if (miner == NULL || miner->started) {
         return 0;
+    }
+    int opencl_running = 0;
+
+#if defined(BTC_MINER_OPENCL)
+    if (miner->opencl_config.enabled) {
+        miner_opencl_device_config_t resolved[MINER_OPENCL_MAX_DEVICES];
+        char error[2048];
+        error[0] = '\0';
+        int resolved_count = opencl_miner_resolve_devices(&miner->opencl_config,
+                                                          resolved,
+                                                          MINER_OPENCL_MAX_DEVICES,
+                                                          error,
+                                                          sizeof(error));
+        if (resolved_count <= 0) {
+            fprintf(stderr, "%s[OPENCL]%s unavailable: %s\n",
+                    C_YELLOW,
+                    C_RESET,
+                    error[0] != '\0' ? error : "no usable OpenCL GPU devices");
+        } else {
+            miner->opencl_threads = calloc((size_t)resolved_count, sizeof(*miner->opencl_threads));
+            miner->opencl_devices = calloc((size_t)resolved_count, sizeof(*miner->opencl_devices));
+            miner->opencl_hashes = calloc((size_t)resolved_count, sizeof(*miner->opencl_hashes));
+            if (miner->opencl_threads == NULL || miner->opencl_devices == NULL || miner->opencl_hashes == NULL) {
+                fprintf(stderr, "%s[OPENCL]%s allocation failed\n", C_BRIGHT_RED, C_RESET);
+                free(miner->opencl_hashes);
+                free(miner->opencl_devices);
+                free(miner->opencl_threads);
+                miner->opencl_hashes = NULL;
+                miner->opencl_devices = NULL;
+                miner->opencl_threads = NULL;
+            } else {
+                for (int i = 0; i < resolved_count; ++i) {
+                    miner_opencl_config_t device_config;
+                    opencl_device_to_config(&miner->opencl_config, &resolved[i], &device_config);
+
+                    opencl_self_test_result_t test_result;
+                    error[0] = '\0';
+                    if (opencl_miner_self_test(&device_config, &test_result, error, sizeof(error)) != 0) {
+                        fprintf(stderr,
+                                "%s[OPENCL]%s platform=%d device=%d self-test failed: %s\n",
+                                C_YELLOW,
+                                C_RESET,
+                                resolved[i].platform,
+                                resolved[i].device,
+                                error[0] != '\0' ? error : "unknown error");
+                        continue;
+                    }
+
+                    error[0] = '\0';
+                    opencl_miner_t *opencl = opencl_miner_create(&device_config, error, sizeof(error));
+                    if (opencl == NULL) {
+                        fprintf(stderr,
+                                "%s[OPENCL]%s platform=%d device=%d unavailable: %s\n",
+                                C_YELLOW,
+                                C_RESET,
+                                resolved[i].platform,
+                                resolved[i].device,
+                                error[0] != '\0' ? error : "unknown error");
+                        continue;
+                    }
+
+                    int slot = miner->opencl_started++;
+                    miner->opencl_devices[slot] = opencl;
+                    printf("%s[OPENCL]%s #%d platform=%d device=%d backend=%s self-test=ok device=%s%s%s version=%s batch=%u local=%u npi=%u\n",
+                           C_CYAN,
+                           C_RESET,
+                           slot,
+                           resolved[i].platform,
+                           resolved[i].device,
+                           opencl_miner_backend_name(opencl),
+                           C_BRIGHT_CYAN,
+                           opencl_miner_device_name(opencl),
+                           C_RESET,
+                           opencl_miner_device_version(opencl),
+                           opencl_miner_batch_size(opencl),
+                           opencl_miner_local_work_size(opencl),
+                           opencl_miner_nonces_per_work_item(opencl));
+                }
+            }
+        }
+    }
+#else
+    if (miner->opencl_config.enabled) {
+        fprintf(stderr, "%s[OPENCL]%s unavailable: this build was compiled without OpenCL support\n",
+                C_YELLOW,
+                C_RESET);
+    }
+#endif
+
+    if (miner->thread_count <= 0
+#if defined(BTC_MINER_OPENCL)
+        && miner->opencl_started <= 0
+#endif
+    ) {
+        return -1;
     }
 
     for (int i = 0; i < miner->thread_count; ++i) {
@@ -506,9 +803,49 @@ int miner_start(miner_t *miner) {
         }
     }
 
+#if defined(BTC_MINER_OPENCL)
+    int opencl_thread_count = miner->opencl_started;
+    for (int i = 0; i < opencl_thread_count; ++i) {
+        if (miner->opencl_devices[i] == NULL) {
+            continue;
+        }
+        opencl_worker_arg_t *arg = malloc(sizeof(*arg));
+        if (arg == NULL) {
+            fprintf(stderr, "%s[OPENCL]%s failed to allocate worker arg\n", C_BRIGHT_RED, C_RESET);
+            opencl_miner_destroy(miner->opencl_devices[i]);
+            miner->opencl_devices[i] = NULL;
+            continue;
+        }
+        arg->miner = miner;
+        arg->opencl = miner->opencl_devices[i];
+        arg->id = i;
+        if (pthread_create(&miner->opencl_threads[i], NULL, opencl_worker_main, arg) != 0) {
+            fprintf(stderr, "%s[OPENCL]%s failed to start worker thread\n", C_BRIGHT_RED, C_RESET);
+            free(arg);
+            opencl_miner_destroy(miner->opencl_devices[i]);
+            miner->opencl_devices[i] = NULL;
+        } else {
+            ++opencl_running;
+        }
+    }
+    if (miner->thread_count <= 0 && opencl_running <= 0) {
+        return -1;
+    }
+#endif
+
     miner->started = 1;
-    printf("%s[MINER]%s started threads=%s%d%s affinity=%soff%s\n",
-           C_MAGENTA, C_RESET, C_BRIGHT_GREEN, miner->thread_count, C_RESET, C_GRAY, C_RESET);
+    printf("%s[MINER]%s started cpu-threads=%s%d%s opencl-devices=%s%d%s cpu-batch=%u affinity=%soff%s\n",
+           C_MAGENTA,
+           C_RESET,
+           C_BRIGHT_GREEN,
+           miner->thread_count,
+           C_RESET,
+           opencl_running ? C_BRIGHT_GREEN : C_GRAY,
+           opencl_running,
+           C_RESET,
+           miner_cpu_batch_size(miner),
+           C_GRAY,
+           C_RESET);
     return 0;
 }
 
@@ -519,11 +856,22 @@ void miner_stop(miner_t *miner) {
 
     pthread_mutex_lock(&miner->lock);
     miner->stop = 1;
+    pthread_cond_broadcast(&miner->work_cond);
     pthread_mutex_unlock(&miner->lock);
 
     for (int i = 0; i < miner->thread_count; ++i) {
         pthread_join(miner->threads[i], NULL);
     }
+#if defined(BTC_MINER_OPENCL)
+    for (int i = 0; i < miner->opencl_started; ++i) {
+        if (miner->opencl_devices != NULL && miner->opencl_devices[i] != NULL) {
+            pthread_join(miner->opencl_threads[i], NULL);
+            opencl_miner_destroy(miner->opencl_devices[i]);
+            miner->opencl_devices[i] = NULL;
+        }
+    }
+    miner->opencl_started = 0;
+#endif
     miner->started = 0;
 }
 
@@ -552,6 +900,7 @@ void miner_set_job(miner_t *miner, const miner_job_t *job) {
     miner->share_head = 0;
     miner->share_tail = 0;
     miner->share_count = 0;
+    pthread_cond_broadcast(&miner->work_cond);
     pthread_mutex_unlock(&miner->lock);
 
     printf("%s[MINER]%s job=%s%s%s seq=%llu en2=%s\n",
@@ -571,6 +920,7 @@ void miner_set_paused(miner_t *miner, int paused) {
 
     pthread_mutex_lock(&miner->lock);
     miner->paused = paused ? 1 : 0;
+    pthread_cond_broadcast(&miner->work_cond);
     pthread_mutex_unlock(&miner->lock);
 }
 
@@ -624,7 +974,15 @@ int miner_thread_count(miner_t *miner) {
     }
 
     pthread_mutex_lock(&miner->lock);
-    int count = miner->thread_count;
+    int opencl_count = 0;
+#if defined(BTC_MINER_OPENCL)
+    for (int i = 0; i < miner->opencl_started; ++i) {
+        if (miner->opencl_devices != NULL && miner->opencl_devices[i] != NULL) {
+            ++opencl_count;
+        }
+    }
+#endif
+    int count = miner->thread_count + opencl_count;
     pthread_mutex_unlock(&miner->lock);
     return count;
 }
@@ -635,13 +993,30 @@ int miner_snapshot_thread_hashes(miner_t *miner, uint64_t *out, int max_count) {
     }
 
     pthread_mutex_lock(&miner->lock);
-    int count = miner->thread_count;
+    int opencl_count = 0;
+#if defined(BTC_MINER_OPENCL)
+    for (int i = 0; i < miner->opencl_started; ++i) {
+        if (miner->opencl_devices != NULL && miner->opencl_devices[i] != NULL) {
+            ++opencl_count;
+        }
+    }
+#endif
+    int count = miner->thread_count + opencl_count;
     if (count > max_count) {
         count = max_count;
     }
-    for (int i = 0; i < count; ++i) {
+    int cpu_count = miner->thread_count < count ? miner->thread_count : count;
+    for (int i = 0; i < cpu_count; ++i) {
         out[i] = miner->thread_hashes[i];
     }
+#if defined(BTC_MINER_OPENCL)
+    int out_index = cpu_count;
+    for (int i = 0; i < miner->opencl_started && out_index < count; ++i) {
+        if (miner->opencl_devices != NULL && miner->opencl_devices[i] != NULL) {
+            out[out_index++] = miner->opencl_hashes[i];
+        }
+    }
+#endif
     pthread_mutex_unlock(&miner->lock);
 
     return count;

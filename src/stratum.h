@@ -1,7 +1,7 @@
 #ifndef BTC_MINER_STRATUM_H
 #define BTC_MINER_STRATUM_H
 
-typedef struct miner miner_t;
+#include "miner.h"
 
 #define STRATUM_PENDING_SHARES 64
 #define STRATUM_MAX_MERKLE_BRANCHES 128
@@ -57,6 +57,7 @@ typedef struct {
 typedef struct {
     int thread_count;
     int enable_mining;
+    miner_opencl_config_t opencl;
     double stats_interval;
     double stop_at;
     double session_seconds;

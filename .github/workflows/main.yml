@@ -54,9 +54,11 @@ jobs:
             mingw-w64-ucrt-x86_64-openssl
             mingw-w64-ucrt-x86_64-jansson
             mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-opencl-headers
+            mingw-w64-ucrt-x86_64-opencl-icd
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON -DBTCRIG_OPENCL=ON
 
       - name: Build
         run: cmake --build build --parallel "$(nproc)"
@@ -68,6 +70,7 @@ jobs:
           ./build/btc_bench.exe --version
           ./build/btc_stratum.exe --self-test
           ./build/btc_stratum.exe --cpu-info
+          ldd build/btc_stratum.exe | grep -qi "opencl"
           ./build/btc_bench.exe -t 1 -s 1
 
       - name: Package

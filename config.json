@@ -1,8 +1,25 @@
 {
-  "autosave": false,
+  "autosave": true,
+  "autotune": {
+    "enabled": true,
+    "cpu-self-test": false,
+    "gpu-self-test": false,
+    "seconds": 1.5
+  },
   "cpu": {
     "enabled": true,
     "threads": 0
+  },
+  "opencl": {
+    "enabled": false,
+    "all-devices": true,
+    "platform": 0,
+    "device": 0,
+    "batch-size": 1048576,
+    "local-work-size": 0,
+    "nonces-per-work-item": 1,
+    "kernel": "auto",
+    "max-results": 256
   },
   "pools": [
     {

@@ -15,6 +15,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 option(BTC_MINER_NATIVE "Enable native CPU tuning for this machine" OFF)
+option(BTCRIG_OPENCL "Enable optional OpenCL mining backend when the SDK is available" ON)
 
 if(BTC_MINER_NATIVE AND
    (CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_C_COMPILER_TARGET MATCHES "android"))
@@ -25,6 +26,9 @@ endif()
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
+if(BTCRIG_OPENCL)
+    find_package(OpenCL QUIET)
+endif()
 
 pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
@@ -42,6 +46,7 @@ set(BTC_MINER_ARM_SHA2_FLAGS "")
 set(BTC_MINER_X86_SHA_NI_FLAGS "")
 set(BTC_MINER_NATIVE_FLAG "")
 set(BTC_MINER_ARM_SHA2_ENABLED FALSE)
+set(BTCRIG_OPENCL_ENABLED FALSE)
 
 check_c_compiler_flag("-march=native" HAS_MARCH_NATIVE)
 check_c_compiler_flag("-mcpu=native" HAS_MCPU_NATIVE)
@@ -107,6 +112,15 @@ if(HAS_X86_SHA_NI_INTRINSICS)
     )
 endif()
 
+set(BTCRIG_OPENCL_SOURCES "")
+if(OpenCL_FOUND)
+    set(BTCRIG_OPENCL_ENABLED TRUE)
+    set(BTCRIG_OPENCL_SOURCES src/opencl_miner.c)
+    message(STATUS "OpenCL found: compat10 GPU backend will be built by default")
+elseif(BTCRIG_OPENCL)
+    message(STATUS "OpenCL not found: building CPU-only miner")
+endif()
+
 add_executable(btc_bench
     src/main.c
     src/console.c
@@ -154,6 +168,7 @@ add_executable(btc_stratum
     src/donation.c
     src/miner.c
     ${BTC_MINER_SHA256D_SOURCES}
+    ${BTCRIG_OPENCL_SOURCES}
 )
 
 target_compile_options(btc_stratum PRIVATE
@@ -181,6 +196,16 @@ endif()
 
 if(HAS_X86_SHA_NI_INTRINSICS)
     target_compile_definitions(btc_stratum PRIVATE BTC_MINER_X86_SHA_NI)
+endif()
+
+if(BTCRIG_OPENCL_ENABLED)
+    target_compile_definitions(btc_stratum PRIVATE BTC_MINER_OPENCL)
+    if(TARGET OpenCL::OpenCL)
+        target_link_libraries(btc_stratum PRIVATE OpenCL::OpenCL)
+    else()
+        target_include_directories(btc_stratum PRIVATE ${OpenCL_INCLUDE_DIRS})
+        target_link_libraries(btc_stratum PRIVATE ${OpenCL_LIBRARIES})
+    endif()
 endif()
 
 target_link_libraries(btc_stratum PRIVATE
