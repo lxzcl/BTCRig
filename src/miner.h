@@ -10,6 +10,9 @@ typedef struct miner miner_t;
 #define MINER_OPENCL_KERNEL_AUTO 0
 #define MINER_OPENCL_KERNEL_COMPACT 1
 #define MINER_OPENCL_KERNEL_UNROLLED 2
+#define MINER_OPENCL_BACKEND_AUTO 0
+#define MINER_OPENCL_BACKEND_COMPAT10 1
+#define MINER_OPENCL_BACKEND_MODERN 2
 
 typedef struct {
     int platform;
@@ -18,6 +21,7 @@ typedef struct {
     uint32_t local_work_size;
     uint32_t nonces_per_work_item;
     uint32_t max_results;
+    int backend_variant;
     int kernel_variant;
 } miner_opencl_device_config_t;
 
@@ -30,6 +34,7 @@ typedef struct {
     uint32_t local_work_size;
     uint32_t nonces_per_work_item;
     uint32_t max_results;
+    int backend_variant;
     int kernel_variant;
     int device_count;
     miner_opencl_device_config_t devices[MINER_OPENCL_MAX_DEVICES];

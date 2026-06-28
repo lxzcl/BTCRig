@@ -537,6 +537,7 @@ void miner_opencl_config_defaults(miner_opencl_config_t *config) {
     config->local_work_size = 0;
     config->nonces_per_work_item = MINER_OPENCL_DEFAULT_NONCES_PER_WORK_ITEM;
     config->max_results = MINER_OPENCL_DEFAULT_MAX_RESULTS;
+    config->backend_variant = MINER_OPENCL_BACKEND_AUTO;
     config->kernel_variant = MINER_OPENCL_KERNEL_AUTO;
 }
 
@@ -559,6 +560,8 @@ static void opencl_device_to_config(const miner_opencl_config_t *base,
         out->nonces_per_work_item = device->nonces_per_work_item != 0 ?
             device->nonces_per_work_item : out->nonces_per_work_item;
         out->max_results = device->max_results != 0 ? device->max_results : out->max_results;
+        out->backend_variant = device->backend_variant != MINER_OPENCL_BACKEND_AUTO ?
+            device->backend_variant : out->backend_variant;
         out->kernel_variant = device->kernel_variant != MINER_OPENCL_KERNEL_AUTO ?
             device->kernel_variant : out->kernel_variant;
     }
@@ -664,6 +667,10 @@ miner_t *miner_create_with_options(int thread_count, const miner_opencl_config_t
         }
         if (miner->opencl_config.max_results == 0) {
             miner->opencl_config.max_results = MINER_OPENCL_DEFAULT_MAX_RESULTS;
+        }
+        if (miner->opencl_config.backend_variant < MINER_OPENCL_BACKEND_AUTO ||
+            miner->opencl_config.backend_variant > MINER_OPENCL_BACKEND_MODERN) {
+            miner->opencl_config.backend_variant = MINER_OPENCL_BACKEND_AUTO;
         }
         if (miner->opencl_config.kernel_variant < MINER_OPENCL_KERNEL_AUTO ||
             miner->opencl_config.kernel_variant > MINER_OPENCL_KERNEL_UNROLLED) {

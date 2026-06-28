@@ -33,6 +33,7 @@ struct opencl_miner {
     uint32_t nonces_per_work_item;
     uint32_t max_results;
     uint32_t *matches;
+    int backend_variant;
     int kernel_variant;
     char device_name[128];
     char device_vendor[128];
@@ -226,6 +227,121 @@ static const char *k_opencl_kernel_tail_helpers =
 "  }\n"
 "}\n";
 
+static const char *k_opencl_kernel_modern_scalar_macro =
+"#define SHA256_COMPRESS_SCALAR(s0,s1,s2,s3,s4,s5,s6,s7,w0,w1,w2,w3,w4,w5,w6,w7,w8,w9,w10,w11,w12,w13,w14,w15) do { \\\n"
+"  u32 a=(s0), b=(s1), c=(s2), d=(s3), e=(s4), f=(s5), g=(s6), h=(s7); \\\n"
+"  ROUND(a,b,c,d,e,f,g,h,w0,0x428a2f98U); \\\n"
+"  ROUND(h,a,b,c,d,e,f,g,w1,0x71374491U); \\\n"
+"  ROUND(g,h,a,b,c,d,e,f,w2,0xb5c0fbcfU); \\\n"
+"  ROUND(f,g,h,a,b,c,d,e,w3,0xe9b5dba5U); \\\n"
+"  ROUND(e,f,g,h,a,b,c,d,w4,0x3956c25bU); \\\n"
+"  ROUND(d,e,f,g,h,a,b,c,w5,0x59f111f1U); \\\n"
+"  ROUND(c,d,e,f,g,h,a,b,w6,0x923f82a4U); \\\n"
+"  ROUND(b,c,d,e,f,g,h,a,w7,0xab1c5ed5U); \\\n"
+"  ROUND(a,b,c,d,e,f,g,h,w8,0xd807aa98U); \\\n"
+"  ROUND(h,a,b,c,d,e,f,g,w9,0x12835b01U); \\\n"
+"  ROUND(g,h,a,b,c,d,e,f,w10,0x243185beU); \\\n"
+"  ROUND(f,g,h,a,b,c,d,e,w11,0x550c7dc3U); \\\n"
+"  ROUND(e,f,g,h,a,b,c,d,w12,0x72be5d74U); \\\n"
+"  ROUND(d,e,f,g,h,a,b,c,w13,0x80deb1feU); \\\n"
+"  ROUND(c,d,e,f,g,h,a,b,w14,0x9bdc06a7U); \\\n"
+"  ROUND(b,c,d,e,f,g,h,a,w15,0xc19bf174U); \\\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w0, w1, w9, w14),0xe49b69c1U); \\\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w1, w2, w10, w15),0xefbe4786U); \\\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w2, w3, w11, w0),0x0fc19dc6U); \\\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w3, w4, w12, w1),0x240ca1ccU); \\\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w4, w5, w13, w2),0x2de92c6fU); \\\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w5, w6, w14, w3),0x4a7484aaU); \\\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w6, w7, w15, w4),0x5cb0a9dcU); \\\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w7, w8, w0, w5),0x76f988daU); \\\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w8, w9, w1, w6),0x983e5152U); \\\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w9, w10, w2, w7),0xa831c66dU); \\\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w10, w11, w3, w8),0xb00327c8U); \\\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w11, w12, w4, w9),0xbf597fc7U); \\\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w12, w13, w5, w10),0xc6e00bf3U); \\\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w13, w14, w6, w11),0xd5a79147U); \\\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w14, w15, w7, w12),0x06ca6351U); \\\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w15, w0, w8, w13),0x14292967U); \\\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w0, w1, w9, w14),0x27b70a85U); \\\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w1, w2, w10, w15),0x2e1b2138U); \\\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w2, w3, w11, w0),0x4d2c6dfcU); \\\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w3, w4, w12, w1),0x53380d13U); \\\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w4, w5, w13, w2),0x650a7354U); \\\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w5, w6, w14, w3),0x766a0abbU); \\\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w6, w7, w15, w4),0x81c2c92eU); \\\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w7, w8, w0, w5),0x92722c85U); \\\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w8, w9, w1, w6),0xa2bfe8a1U); \\\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w9, w10, w2, w7),0xa81a664bU); \\\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w10, w11, w3, w8),0xc24b8b70U); \\\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w11, w12, w4, w9),0xc76c51a3U); \\\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w12, w13, w5, w10),0xd192e819U); \\\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w13, w14, w6, w11),0xd6990624U); \\\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w14, w15, w7, w12),0xf40e3585U); \\\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w15, w0, w8, w13),0x106aa070U); \\\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w0, w1, w9, w14),0x19a4c116U); \\\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w1, w2, w10, w15),0x1e376c08U); \\\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w2, w3, w11, w0),0x2748774cU); \\\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w3, w4, w12, w1),0x34b0bcb5U); \\\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w4, w5, w13, w2),0x391c0cb3U); \\\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w5, w6, w14, w3),0x4ed8aa4aU); \\\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w6, w7, w15, w4),0x5b9cca4fU); \\\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w7, w8, w0, w5),0x682e6ff3U); \\\n"
+"  ROUND(a,b,c,d,e,f,g,h,MSG(w8, w9, w1, w6),0x748f82eeU); \\\n"
+"  ROUND(h,a,b,c,d,e,f,g,MSG(w9, w10, w2, w7),0x78a5636fU); \\\n"
+"  ROUND(g,h,a,b,c,d,e,f,MSG(w10, w11, w3, w8),0x84c87814U); \\\n"
+"  ROUND(f,g,h,a,b,c,d,e,MSG(w11, w12, w4, w9),0x8cc70208U); \\\n"
+"  ROUND(e,f,g,h,a,b,c,d,MSG(w12, w13, w5, w10),0x90befffaU); \\\n"
+"  ROUND(d,e,f,g,h,a,b,c,MSG(w13, w14, w6, w11),0xa4506cebU); \\\n"
+"  ROUND(c,d,e,f,g,h,a,b,MSG(w14, w15, w7, w12),0xbef9a3f7U); \\\n"
+"  ROUND(b,c,d,e,f,g,h,a,MSG(w15, w0, w8, w13),0xc67178f2U); \\\n"
+"  (s0)+=a; (s1)+=b; (s2)+=c; (s3)+=d; (s4)+=e; (s5)+=f; (s6)+=g; (s7)+=h; \\\n"
+"} while (0)\n";
+
+static const char *k_opencl_kernel_modern_tail_helpers =
+"inline int meets_target_words(u32 h0, u32 h1, u32 h2, u32 h3, u32 h4, u32 h5, u32 h6, u32 h7,\n"
+"                              u32 t0, u32 t1, u32 t2, u32 t3, u32 t4, u32 t5, u32 t6, u32 t7) {\n"
+"  u32 h = bswap32(h7); if (h < t7) return 1; if (h > t7) return 0;\n"
+"  h = bswap32(h6); if (h < t6) return 1; if (h > t6) return 0;\n"
+"  h = bswap32(h5); if (h < t5) return 1; if (h > t5) return 0;\n"
+"  h = bswap32(h4); if (h < t4) return 1; if (h > t4) return 0;\n"
+"  h = bswap32(h3); if (h < t3) return 1; if (h > t3) return 0;\n"
+"  h = bswap32(h2); if (h < t2) return 1; if (h > t2) return 0;\n"
+"  h = bswap32(h1); if (h < t1) return 1; if (h > t1) return 0;\n"
+"  h = bswap32(h0); if (h < t0) return 1; if (h > t0) return 0;\n"
+"  return 1;\n"
+"}\n"
+"inline void store_match_words(u32 nonce, u32 h0, u32 h1, u32 h2, u32 h3, u32 h4, u32 h5, u32 h6, u32 h7,\n"
+"                              u32 max_results, __global volatile u32 *result_count, __global u32 *matches) {\n"
+"  u32 idx = atomic_inc(result_count);\n"
+"  if (idx < max_results) {\n"
+"    u32 base = idx * 9U;\n"
+"    matches[base] = nonce;\n"
+"    matches[base + 1U] = h0; matches[base + 2U] = h1; matches[base + 3U] = h2; matches[base + 4U] = h3;\n"
+"    matches[base + 5U] = h4; matches[base + 6U] = h5; matches[base + 7U] = h6; matches[base + 8U] = h7;\n"
+"  }\n"
+"}\n"
+"inline void scan_one_nonce(u32 fast0, u32 fast1, u32 fast2, u32 fast3,\n"
+"                           u32 fast4, u32 fast5, u32 fast6, u32 fast7,\n"
+"                           u32 target0, u32 target1, u32 target2, u32 target3,\n"
+"                           u32 target4, u32 target5, u32 target6, u32 target7,\n"
+"                           u32 tail0, u32 tail1, u32 tail2, u32 nonce,\n"
+"                           u32 max_results,\n"
+"                           __global volatile u32 *result_count,\n"
+"                           __global u32 *matches) {\n"
+"  u32 s0=fast0, s1=fast1, s2=fast2, s3=fast3, s4=fast4, s5=fast5, s6=fast6, s7=fast7;\n"
+"  u32 w0=tail0, w1=tail1, w2=tail2, w3=bswap32(nonce), w4=0x80000000U, w5=0U, w6=0U, w7=0U;\n"
+"  u32 w8=0U, w9=0U, w10=0U, w11=0U, w12=0U, w13=0U, w14=0U, w15=640U;\n"
+"  SHA256_COMPRESS_SCALAR(s0,s1,s2,s3,s4,s5,s6,s7,w0,w1,w2,w3,w4,w5,w6,w7,w8,w9,w10,w11,w12,w13,w14,w15);\n"
+"  u32 h0=0x6a09e667U, h1=0xbb67ae85U, h2=0x3c6ef372U, h3=0xa54ff53aU;\n"
+"  u32 h4=0x510e527fU, h5=0x9b05688cU, h6=0x1f83d9abU, h7=0x5be0cd19U;\n"
+"  w0=s0; w1=s1; w2=s2; w3=s3; w4=s4; w5=s5; w6=s6; w7=s7;\n"
+"  w8=0x80000000U; w9=0U; w10=0U; w11=0U; w12=0U; w13=0U; w14=0U; w15=256U;\n"
+"  SHA256_COMPRESS_SCALAR(h0,h1,h2,h3,h4,h5,h6,h7,w0,w1,w2,w3,w4,w5,w6,w7,w8,w9,w10,w11,w12,w13,w14,w15);\n"
+"  if (meets_target_words(h0,h1,h2,h3,h4,h5,h6,h7,target0,target1,target2,target3,target4,target5,target6,target7)) {\n"
+"    store_match_words(nonce,h0,h1,h2,h3,h4,h5,h6,h7,max_results,result_count,matches);\n"
+"  }\n"
+"}\n";
+
 static const char *k_opencl_kernel_tail_kernels =
 "#define SCAN_KERNEL_ARGS \\\n"
 "  u32 fast0, u32 fast1, u32 fast2, u32 fast3, \\\n"
@@ -399,6 +515,24 @@ static int normalize_kernel_variant(int variant) {
     return MINER_OPENCL_KERNEL_AUTO;
 }
 
+static int normalize_backend_variant(int variant) {
+    if (variant == MINER_OPENCL_BACKEND_COMPAT10 || variant == MINER_OPENCL_BACKEND_MODERN) {
+        return variant;
+    }
+    return MINER_OPENCL_BACKEND_AUTO;
+}
+
+static const char *opencl_backend_variant_name(int variant) {
+    switch (variant) {
+    case MINER_OPENCL_BACKEND_COMPAT10:
+        return "compat10";
+    case MINER_OPENCL_BACKEND_MODERN:
+        return "modern";
+    default:
+        return "auto";
+    }
+}
+
 static const char *opencl_kernel_variant_name(int variant) {
     switch (variant) {
     case MINER_OPENCL_KERNEL_COMPACT:
@@ -498,6 +632,43 @@ static int validate_compat10_device(cl_device_id device,
     return 0;
 }
 
+static int validate_modern_device(const char *device_version,
+                                  char *error,
+                                  size_t error_size) {
+    if (!opencl_version_at_least(device_version, 1, 2)) {
+        set_error(error,
+                  error_size,
+                  "modern backend requires OpenCL 1.2 or newer",
+                  CL_SUCCESS);
+        return -1;
+    }
+    return 0;
+}
+
+static int resolve_backend_variant(cl_device_id device,
+                                   const char *device_version,
+                                   int requested,
+                                   char *error,
+                                   size_t error_size) {
+    requested = normalize_backend_variant(requested);
+    if (requested == MINER_OPENCL_BACKEND_AUTO) {
+        requested = opencl_version_at_least(device_version, 1, 2) ?
+            MINER_OPENCL_BACKEND_MODERN : MINER_OPENCL_BACKEND_COMPAT10;
+    }
+
+    if (requested == MINER_OPENCL_BACKEND_MODERN) {
+        if (validate_modern_device(device_version, error, error_size) != 0) {
+            return -1;
+        }
+        return MINER_OPENCL_BACKEND_MODERN;
+    }
+
+    if (validate_compat10_device(device, device_version, error, error_size) != 0) {
+        return -1;
+    }
+    return MINER_OPENCL_BACKEND_COMPAT10;
+}
+
 static int select_platform_device(const miner_opencl_config_t *config,
                                   cl_platform_id *platform_out,
                                   cl_device_id *device_out,
@@ -585,6 +756,11 @@ static void opencl_device_config_apply_defaults(miner_opencl_device_config_t *de
     } else {
         device->nonces_per_work_item = clamp_nonces_per_work_item(device->nonces_per_work_item);
     }
+    if (device->backend_variant == MINER_OPENCL_BACKEND_AUTO) {
+        device->backend_variant = normalize_backend_variant(config->backend_variant);
+    } else {
+        device->backend_variant = normalize_backend_variant(device->backend_variant);
+    }
     if (device->kernel_variant == MINER_OPENCL_KERNEL_AUTO) {
         device->kernel_variant = normalize_kernel_variant(config->kernel_variant);
     } else {
@@ -617,6 +793,7 @@ int opencl_miner_resolve_devices(const miner_opencl_config_t *config,
         devices_out[0].local_work_size = config->local_work_size;
         devices_out[0].nonces_per_work_item = clamp_nonces_per_work_item(config->nonces_per_work_item);
         devices_out[0].max_results = config_u32_or(config->max_results, OPENCL_DEFAULT_MAX_RESULTS);
+        devices_out[0].backend_variant = normalize_backend_variant(config->backend_variant);
         devices_out[0].kernel_variant = normalize_kernel_variant(config->kernel_variant);
         return 1;
     }
@@ -677,6 +854,7 @@ int opencl_miner_resolve_devices(const miner_opencl_config_t *config,
             devices_out[found].local_work_size = config->local_work_size;
             devices_out[found].nonces_per_work_item = clamp_nonces_per_work_item(config->nonces_per_work_item);
             devices_out[found].max_results = config_u32_or(config->max_results, OPENCL_DEFAULT_MAX_RESULTS);
+            devices_out[found].backend_variant = normalize_backend_variant(config->backend_variant);
             devices_out[found].kernel_variant = normalize_kernel_variant(config->kernel_variant);
             ++found;
         }
@@ -694,9 +872,12 @@ int opencl_miner_resolve_devices(const miner_opencl_config_t *config,
 
 static int build_program(opencl_miner_t *miner, char *error, size_t error_size) {
     cl_int rc = CL_SUCCESS;
-    const char *sources[4];
-    size_t lengths[4];
+    const char *sources[5];
+    size_t lengths[5];
     cl_uint source_count = 0;
+    int use_modern_unrolled =
+        miner->backend_variant == MINER_OPENCL_BACKEND_MODERN &&
+        miner->kernel_variant == MINER_OPENCL_KERNEL_UNROLLED;
 
     if (miner->kernel_variant == MINER_OPENCL_KERNEL_COMPACT) {
         sources[source_count] = k_opencl_kernel_compact;
@@ -707,8 +888,15 @@ static int build_program(opencl_miner_t *miner, char *error, size_t error_size) 
         sources[source_count] = k_opencl_kernel_rounds;
         lengths[source_count++] = strlen(k_opencl_kernel_rounds);
     }
-    sources[source_count] = k_opencl_kernel_tail_helpers;
-    lengths[source_count++] = strlen(k_opencl_kernel_tail_helpers);
+    if (use_modern_unrolled) {
+        sources[source_count] = k_opencl_kernel_modern_scalar_macro;
+        lengths[source_count++] = strlen(k_opencl_kernel_modern_scalar_macro);
+        sources[source_count] = k_opencl_kernel_modern_tail_helpers;
+        lengths[source_count++] = strlen(k_opencl_kernel_modern_tail_helpers);
+    } else {
+        sources[source_count] = k_opencl_kernel_tail_helpers;
+        lengths[source_count++] = strlen(k_opencl_kernel_tail_helpers);
+    }
     sources[source_count] = k_opencl_kernel_tail_kernels;
     lengths[source_count++] = strlen(k_opencl_kernel_tail_kernels);
 
@@ -781,6 +969,9 @@ opencl_miner_t *opencl_miner_create(const miner_opencl_config_t *config,
     int requested_kernel_variant = config != NULL ?
         normalize_kernel_variant(config->kernel_variant) :
         MINER_OPENCL_KERNEL_AUTO;
+    int requested_backend_variant = config != NULL ?
+        normalize_backend_variant(config->backend_variant) :
+        MINER_OPENCL_BACKEND_AUTO;
     miner->kernel_variant = requested_kernel_variant == MINER_OPENCL_KERNEL_COMPACT ?
         MINER_OPENCL_KERNEL_COMPACT : MINER_OPENCL_KERNEL_UNROLLED;
     if (miner->batch_size < 1024U) {
@@ -807,10 +998,16 @@ opencl_miner_t *opencl_miner_create(const miner_opencl_config_t *config,
     if (miner->device_version[0] == '\0') {
         snprintf(miner->device_version, sizeof(miner->device_version), "unknown");
     }
-    if (validate_compat10_device(miner->device, miner->device_version, error, error_size) != 0) {
+    int resolved_backend = resolve_backend_variant(miner->device,
+                                                   miner->device_version,
+                                                   requested_backend_variant,
+                                                   error,
+                                                   error_size);
+    if (resolved_backend < 0) {
         opencl_miner_destroy(miner);
         return NULL;
     }
+    miner->backend_variant = resolved_backend;
 
     size_t max_work_group = 0;
     (void)clGetDeviceInfo(miner->device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(max_work_group), &max_work_group, NULL);
@@ -855,7 +1052,8 @@ opencl_miner_t *opencl_miner_create(const miner_opencl_config_t *config,
 program_built:
     snprintf(miner->backend_name,
              sizeof(miner->backend_name),
-             "compat10-%s",
+             "%s-%s",
+             opencl_backend_variant_name(miner->backend_variant),
              opencl_kernel_variant_name(miner->kernel_variant));
 
     miner->count_buf = clCreateBuffer(miner->context, CL_MEM_READ_WRITE, sizeof(uint32_t), NULL, &rc);
