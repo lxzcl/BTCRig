@@ -673,7 +673,7 @@ miner_t *miner_create_with_options(int thread_count, const miner_opencl_config_t
             miner->opencl_config.backend_variant = MINER_OPENCL_BACKEND_AUTO;
         }
         if (miner->opencl_config.kernel_variant < MINER_OPENCL_KERNEL_AUTO ||
-            miner->opencl_config.kernel_variant > MINER_OPENCL_KERNEL_UNROLLED) {
+            miner->opencl_config.kernel_variant > MINER_OPENCL_KERNEL_REGISTER_HEAVY) {
             miner->opencl_config.kernel_variant = MINER_OPENCL_KERNEL_AUTO;
         }
     }

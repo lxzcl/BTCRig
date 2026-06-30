@@ -25,7 +25,7 @@ BTCRig turns idle CPU resources on Windows, Linux, Android/Termux, x86 PCs, and 
 ## Highlights
 
 - Automatic backend selection: x86 SHA-NI, ARMv8 SHA2, OpenSSL, or portable C.
-- Optional OpenCL GPU path with compat10 fallback and OpenCL 1.2+ modern candidate selection; disabled by default at runtime.
+- Optional OpenCL GPU path with compat10 fallback and OpenCL 1.2+ modern fixed-npi/register-heavy candidates; disabled by default at runtime.
 - Mixed CPU/GPU nonce scheduler: GPU workers keep large dispatch batches while CPU workers use smaller chunks for faster job turnover.
 - Built for reusing heterogeneous idle devices instead of leaving their CPU capacity unused.
 - Two-lane interleaved x86 SHA-NI scanning and dedicated ARMv8 SHA2 range scanning.
@@ -195,7 +195,7 @@ Common commands:
 --opencl-local N           OpenCL local work size, 0 means automatic
 --opencl-npi N             nonces scanned by each OpenCL work-item
 --opencl-backend NAME      OpenCL backend: auto, compat10, or modern
---opencl-kernel NAME       OpenCL kernel variant: auto, compact, or unrolled
+--opencl-kernel NAME       OpenCL kernel variant: auto, compact, unrolled, fixed-npi1, fixed-npi2, fixed-npi4, or register-heavy
 --opencl-self-test         verify the compiled OpenCL kernel without connecting to a pool
 --autotune                 force first-run CPU/GPU benchmark and update config
 --no-autotune              skip automatic first-run benchmark
@@ -277,7 +277,7 @@ This deliberately avoids trying every possible CPU/GPU subset. The high-value mo
 | `arm-sha2` | ARMv8 CPU with SHA2 extensions | Dedicated ARM range scanner |
 | `openssl` | All supported builds | Library fallback |
 | `fast-c` | All supported builds | Portable C fallback |
-| `opencl` | Optional `btc_stratum` worker | OpenCL GPU worker with `compat10` fallback and `modern` OpenCL 1.2+ candidate selection |
+| `opencl` | Optional `btc_stratum` worker | OpenCL GPU worker with `compat10` fallback and `modern` OpenCL 1.2+ fixed-npi/register-heavy candidate selection |
 
 Override automatic selection with `BTC_MINER_SHA_BACKEND`, for example:
 
@@ -300,7 +300,7 @@ Multiple OpenCL GPUs can be selected explicitly:
   "enabled": true,
   "all-devices": false,
   "devices": [
-    { "platform": 0, "device": 0, "backend": "modern", "batch-size": 1048576, "local-work-size": 256, "nonces-per-work-item": 1, "kernel": "unrolled" },
+    { "platform": 0, "device": 0, "backend": "modern", "batch-size": 1048576, "local-work-size": 256, "nonces-per-work-item": 1, "kernel": "fixed-npi1" },
     { "platform": 1, "device": 0, "backend": "compat10", "batch-size": 524288, "local-work-size": 128, "nonces-per-work-item": 2, "kernel": "compact" }
   ]
 }
@@ -308,7 +308,7 @@ Multiple OpenCL GPUs can be selected explicitly:
 
 Each OpenCL device runs a self-test before mining starts. Devices that fail the self-test are skipped while any working CPU or GPU workers continue.
 
-`backend=compat10` avoids OpenCL 2.x APIs and uses only OpenCL 1.0 host APIs. OpenCL 1.0 devices need `cl_khr_global_int32_base_atomics`; OpenCL 1.1+ devices can use core global int32 atomics. `backend=modern` is the OpenCL 1.2+ candidate path; `backend=auto` benchmarks compat10 and modern when the device supports both. `kernel=unrolled` is the high-throughput SHA256d path, while `kernel=compact` keeps a smaller loop-based compressor for older drivers or devices with lower register capacity. `kernel=auto` tries unrolled first and falls back to compact if the driver cannot build it.
+`backend=compat10` avoids OpenCL 2.x APIs and uses only OpenCL 1.0 host APIs. OpenCL 1.0 devices need `cl_khr_global_int32_base_atomics`; OpenCL 1.1+ devices can use core global int32 atomics. `backend=modern` is the OpenCL 1.2+ candidate path. `backend=auto` benchmarks compat10 and modern when the device supports both. `kernel=unrolled` is the high-throughput SHA256d path, while `kernel=compact` keeps a smaller loop-based compressor for older drivers or devices with lower register capacity. `kernel=fixed-npi1`, `fixed-npi2`, and `fixed-npi4` are modern-only kernels with the nonce count per work-item fixed at compile selection time. `kernel=register-heavy` is a modern-only two-nonce vector-register candidate with npi fixed to 2. Autotune tests modern-only kernels only with `backend=modern`; `kernel=auto` benchmarks compact/unrolled and the modern candidates, then keeps the fastest stable result.
 
 ## Documentation
 

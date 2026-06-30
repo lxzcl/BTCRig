@@ -326,6 +326,14 @@ static const char *opencl_kernel_variant_name(int variant) {
         return "compact";
     case MINER_OPENCL_KERNEL_UNROLLED:
         return "unrolled";
+    case MINER_OPENCL_KERNEL_FIXED_NPI1:
+        return "fixed-npi1";
+    case MINER_OPENCL_KERNEL_FIXED_NPI2:
+        return "fixed-npi2";
+    case MINER_OPENCL_KERNEL_FIXED_NPI4:
+        return "fixed-npi4";
+    case MINER_OPENCL_KERNEL_REGISTER_HEAVY:
+        return "register-heavy";
     default:
         return "auto";
     }
@@ -342,6 +350,44 @@ static const char *opencl_backend_variant_name(int variant) {
     }
 }
 
+#if defined(BTC_MINER_OPENCL)
+static uint32_t opencl_kernel_fixed_npi(int variant) {
+    switch (variant) {
+    case MINER_OPENCL_KERNEL_FIXED_NPI1:
+        return 1U;
+    case MINER_OPENCL_KERNEL_FIXED_NPI2:
+        return 2U;
+    case MINER_OPENCL_KERNEL_FIXED_NPI4:
+        return 4U;
+    default:
+        return 0U;
+    }
+}
+
+static uint32_t opencl_kernel_forced_npi(int variant) {
+    uint32_t fixed_npi = opencl_kernel_fixed_npi(variant);
+    if (fixed_npi != 0) {
+        return fixed_npi;
+    }
+    if (variant == MINER_OPENCL_KERNEL_REGISTER_HEAVY) {
+        return 2U;
+    }
+    return 0U;
+}
+
+static int opencl_kernel_modern_only(int variant) {
+    return opencl_kernel_fixed_npi(variant) != 0 ||
+        variant == MINER_OPENCL_KERNEL_REGISTER_HEAVY;
+}
+
+static int opencl_kernel_backend_compatible(int backend, int kernel) {
+    if (opencl_kernel_modern_only(kernel)) {
+        return backend == MINER_OPENCL_BACKEND_MODERN;
+    }
+    return 1;
+}
+#endif
+
 static int parse_opencl_kernel_variant(const char *value, int fallback) {
     if (value == NULL || value[0] == '\0' || string_equals_ci(value, "auto")) {
         return MINER_OPENCL_KERNEL_AUTO;
@@ -351,6 +397,30 @@ static int parse_opencl_kernel_variant(const char *value, int fallback) {
     }
     if (string_equals_ci(value, "unrolled")) {
         return MINER_OPENCL_KERNEL_UNROLLED;
+    }
+    if (string_equals_ci(value, "fixed-npi1") ||
+        string_equals_ci(value, "fixed_npi1") ||
+        string_equals_ci(value, "modern-fixed-npi1") ||
+        string_equals_ci(value, "modern_fixed_npi1")) {
+        return MINER_OPENCL_KERNEL_FIXED_NPI1;
+    }
+    if (string_equals_ci(value, "fixed-npi2") ||
+        string_equals_ci(value, "fixed_npi2") ||
+        string_equals_ci(value, "modern-fixed-npi2") ||
+        string_equals_ci(value, "modern_fixed_npi2")) {
+        return MINER_OPENCL_KERNEL_FIXED_NPI2;
+    }
+    if (string_equals_ci(value, "fixed-npi4") ||
+        string_equals_ci(value, "fixed_npi4") ||
+        string_equals_ci(value, "modern-fixed-npi4") ||
+        string_equals_ci(value, "modern_fixed_npi4")) {
+        return MINER_OPENCL_KERNEL_FIXED_NPI4;
+    }
+    if (string_equals_ci(value, "register-heavy") ||
+        string_equals_ci(value, "register_heavy") ||
+        string_equals_ci(value, "modern-register-heavy") ||
+        string_equals_ci(value, "modern_register_heavy")) {
+        return MINER_OPENCL_KERNEL_REGISTER_HEAVY;
     }
     return fallback;
 }
@@ -803,6 +873,10 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
         base->kernel_variant,
         MINER_OPENCL_KERNEL_UNROLLED,
         MINER_OPENCL_KERNEL_COMPACT,
+        MINER_OPENCL_KERNEL_FIXED_NPI1,
+        MINER_OPENCL_KERNEL_FIXED_NPI2,
+        MINER_OPENCL_KERNEL_FIXED_NPI4,
+        MINER_OPENCL_KERNEL_REGISTER_HEAVY,
     };
     uint32_t local_candidates[sizeof(local_candidates_raw) / sizeof(local_candidates_raw[0])];
     uint32_t npi_candidates[sizeof(npi_candidates_raw) / sizeof(npi_candidates_raw[0])];
@@ -834,8 +908,10 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
         }
     }
     for (size_t i = 0; i < sizeof(kernel_candidates_raw) / sizeof(kernel_candidates_raw[0]); ++i) {
-        uint32_t value = (uint32_t)(kernel_candidates_raw[i] == MINER_OPENCL_KERNEL_COMPACT ?
-            MINER_OPENCL_KERNEL_COMPACT : MINER_OPENCL_KERNEL_UNROLLED);
+        uint32_t value = (uint32_t)kernel_candidates_raw[i];
+        if (value < MINER_OPENCL_KERNEL_COMPACT || value > MINER_OPENCL_KERNEL_REGISTER_HEAVY) {
+            continue;
+        }
         if (!value_seen_u32(kernel_candidates, kernel_count, value)) {
             kernel_candidates[kernel_count++] = value;
         }
@@ -862,6 +938,9 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
 
     for (int bi = 0; bi < backend_count; ++bi) {
     for (int ki = 0; ki < kernel_count; ++ki) {
+        if (!opencl_kernel_backend_compatible((int)backend_candidates[bi], (int)kernel_candidates[ki])) {
+            continue;
+        }
         for (int li = 0; li < local_count; ++li) {
             for (int ni = 0; ni < npi_count; ++ni) {
             miner_opencl_device_config_t candidate = *device;
@@ -870,8 +949,12 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
 
             candidate.backend_variant = (int)backend_candidates[bi];
             candidate.kernel_variant = (int)kernel_candidates[ki];
+            uint32_t forced_npi = opencl_kernel_forced_npi(candidate.kernel_variant);
+            if (forced_npi != 0 && npi_candidates[ni] != forced_npi) {
+                continue;
+            }
             candidate.local_work_size = local_candidates[li];
-            candidate.nonces_per_work_item = npi_candidates[ni];
+            candidate.nonces_per_work_item = forced_npi != 0 ? forced_npi : npi_candidates[ni];
             candidate.batch_size = best_device.batch_size;
             autotune_device_list_config(base, &candidate, 1, &opencl);
 
@@ -1411,7 +1494,7 @@ static void usage(const char *argv0) {
     printf("     [--reconnect-delay seconds] [--donate-level N] [--no-mine]\n");
     printf("     [--no-cpu] [--opencl] [--opencl-all] [--opencl-platform N] [--opencl-device N]\n");
     printf("     [--opencl-batch N] [--opencl-local N] [--opencl-npi N]\n");
-    printf("     [--opencl-backend auto|compat10|modern] [--opencl-kernel auto|compact|unrolled]\n");
+    printf("     [--opencl-backend auto|compat10|modern] [--opencl-kernel auto|compact|unrolled|fixed-npi1|fixed-npi2|fixed-npi4|register-heavy]\n");
     printf("     [--autotune] [--no-autotune] [--autotune-seconds N]\n");
     printf("\nDefaults:\n");
     printf("  version: %s\n", BTCRIG_VERSION_TAG);
@@ -1427,7 +1510,7 @@ static void usage(const char *argv0) {
     printf("  opencl: manual enable uses all OpenCL GPU devices unless a device is selected; autotune may select it\n");
     printf("  opencl compat10: OpenCL 1.0/1.1 compatible, requires global int32 atomics on 1.0 devices\n");
     printf("  opencl backend auto: benchmarks compat10 and modern when supported\n");
-    printf("  opencl kernel: auto prefers unrolled and can fall back to compact; autotune tests compact and unrolled\n");
+    printf("  opencl kernel: auto tests compact/unrolled plus modern fixed-npi and register-heavy variants when supported\n");
     printf("  autotune: enabled by default; GPU modes are benchmarked only when OpenCL is enabled\n");
     printf("  donate-level: %d%% (%s)\n",
            DONATION_DEFAULT_LEVEL,
@@ -1608,7 +1691,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--opencl-kernel") == 0 && i + 1 < argc) {
             int parsed = parse_opencl_kernel_variant(argv[++i], -1);
             if (parsed < 0) {
-                fprintf(stderr, "%s[CONFIG]%s invalid --opencl-kernel, use auto, compact, or unrolled\n",
+                fprintf(stderr, "%s[CONFIG]%s invalid --opencl-kernel, use auto, compact, unrolled, fixed-npi1, fixed-npi2, fixed-npi4, or register-heavy\n",
                         C_BRIGHT_RED,
                         C_RESET);
                 return 2;

@@ -402,6 +402,139 @@ static const char *k_opencl_kernel_tail_kernels =
 "  }\n"
 "}\n";
 
+static const char *k_opencl_kernel_modern_fixed_kernels =
+"#define SCAN_KERNEL_ARGS \\\n"
+"  u32 fast0, u32 fast1, u32 fast2, u32 fast3, \\\n"
+"  u32 fast4, u32 fast5, u32 fast6, u32 fast7, \\\n"
+"  u32 target0, u32 target1, u32 target2, u32 target3, \\\n"
+"  u32 target4, u32 target5, u32 target6, u32 target7, \\\n"
+"  u32 tail0, u32 tail1, u32 tail2, \\\n"
+"  u32 start_nonce, u32 nonce_count, \\\n"
+"  u32 nonces_per_work_item, \\\n"
+"  u32 max_results, \\\n"
+"  __global volatile u32 *result_count, \\\n"
+"  __global u32 *matches\n"
+"#define SCAN_ONE(base_nonce) \\\n"
+"  scan_one_nonce(fast0, fast1, fast2, fast3, fast4, fast5, fast6, fast7, \\\n"
+"                 target0, target1, target2, target3, target4, target5, target6, target7, \\\n"
+"                 tail0, tail1, tail2, start_nonce + (base_nonce), max_results, result_count, matches)\n"
+"__kernel void modern_scan_nonce_range_fixed_npi1(SCAN_KERNEL_ARGS) {\n"
+"  (void)nonces_per_work_item;\n"
+"  u32 gid = (u32)get_global_id(0);\n"
+"  if (gid >= nonce_count) return;\n"
+"  SCAN_ONE(gid);\n"
+"}\n"
+"__kernel void modern_scan_nonce_range_fixed_npi2(SCAN_KERNEL_ARGS) {\n"
+"  (void)nonces_per_work_item;\n"
+"  u32 base_nonce = (u32)get_global_id(0) * 2U;\n"
+"  if (base_nonce >= nonce_count) return;\n"
+"  SCAN_ONE(base_nonce);\n"
+"  if (base_nonce + 1U < nonce_count) SCAN_ONE(base_nonce + 1U);\n"
+"}\n"
+"__kernel void modern_scan_nonce_range_fixed_npi4(SCAN_KERNEL_ARGS) {\n"
+"  (void)nonces_per_work_item;\n"
+"  u32 base_nonce = (u32)get_global_id(0) * 4U;\n"
+"  if (base_nonce >= nonce_count) return;\n"
+"  SCAN_ONE(base_nonce);\n"
+"  if (base_nonce + 1U < nonce_count) SCAN_ONE(base_nonce + 1U);\n"
+"  if (base_nonce + 2U < nonce_count) SCAN_ONE(base_nonce + 2U);\n"
+"  if (base_nonce + 3U < nonce_count) SCAN_ONE(base_nonce + 3U);\n"
+"}\n";
+
+static const char *k_opencl_kernel_modern_register_prefix =
+"typedef uint2 u32v;\n"
+"__constant u32 K256V[64] = {\n"
+"0x428a2f98U,0x71374491U,0xb5c0fbcfU,0xe9b5dba5U,0x3956c25bU,0x59f111f1U,0x923f82a4U,0xab1c5ed5U,\n"
+"0xd807aa98U,0x12835b01U,0x243185beU,0x550c7dc3U,0x72be5d74U,0x80deb1feU,0x9bdc06a7U,0xc19bf174U,\n"
+"0xe49b69c1U,0xefbe4786U,0x0fc19dc6U,0x240ca1ccU,0x2de92c6fU,0x4a7484aaU,0x5cb0a9dcU,0x76f988daU,\n"
+"0x983e5152U,0xa831c66dU,0xb00327c8U,0xbf597fc7U,0xc6e00bf3U,0xd5a79147U,0x06ca6351U,0x14292967U,\n"
+"0x27b70a85U,0x2e1b2138U,0x4d2c6dfcU,0x53380d13U,0x650a7354U,0x766a0abbU,0x81c2c92eU,0x92722c85U,\n"
+"0xa2bfe8a1U,0xa81a664bU,0xc24b8b70U,0xc76c51a3U,0xd192e819U,0xd6990624U,0xf40e3585U,0x106aa070U,\n"
+"0x19a4c116U,0x1e376c08U,0x2748774cU,0x34b0bcb5U,0x391c0cb3U,0x4ed8aa4aU,0x5b9cca4fU,0x682e6ff3U,\n"
+"0x748f82eeU,0x78a5636fU,0x84c87814U,0x8cc70208U,0x90befffaU,0xa4506cebU,0xbef9a3f7U,0xc67178f2U};\n"
+"inline u32v rotr32v(u32v x, u32 n) { return (x >> n) | (x << (32U - n)); }\n"
+"inline u32v bswap32v(u32v v) { return ((v & (u32v)(0x000000ffU)) << 24) | ((v & (u32v)(0x0000ff00U)) << 8) | ((v & (u32v)(0x00ff0000U)) >> 8) | ((v & (u32v)(0xff000000U)) >> 24); }\n"
+"#define SS0V(x) (rotr32v((x), 7) ^ rotr32v((x), 18) ^ ((x) >> 3))\n"
+"#define SS1V(x) (rotr32v((x), 17) ^ rotr32v((x), 19) ^ ((x) >> 10))\n"
+"#define BS0V(x) (rotr32v((x), 2) ^ rotr32v((x), 13) ^ rotr32v((x), 22))\n"
+"#define BS1V(x) (rotr32v((x), 6) ^ rotr32v((x), 11) ^ rotr32v((x), 25))\n"
+"#define CHV(x,y,z) (((x) & (y)) ^ (~(x) & (z)))\n"
+"#define MAJV(x,y,z) (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))\n"
+"inline void compress_vec2(u32v st[8], u32v w[16]) {\n"
+"  u32v a=st[0], b=st[1], c=st[2], d=st[3], e=st[4], f=st[5], g=st[6], h=st[7];\n"
+"  for (int i = 0; i < 64; ++i) {\n"
+"    u32v wi;\n"
+"    if (i < 16) {\n"
+"      wi = w[i];\n"
+"    } else {\n"
+"      int j = i & 15;\n"
+"      wi = w[j] + SS1V(w[(j + 14) & 15]) + w[(j + 9) & 15] + SS0V(w[(j + 1) & 15]);\n"
+"      w[j] = wi;\n"
+"    }\n"
+"    u32v t1 = h + BS1V(e) + CHV(e, f, g) + (u32v)(K256V[i]) + wi;\n"
+"    u32v t2 = BS0V(a) + MAJV(a, b, c);\n"
+"    h = g; g = f; f = e; e = d + t1;\n"
+"    d = c; c = b; b = a; a = t1 + t2;\n"
+"  }\n"
+"  st[0]+=a; st[1]+=b; st[2]+=c; st[3]+=d; st[4]+=e; st[5]+=f; st[6]+=g; st[7]+=h;\n"
+"}\n";
+
+static const char *k_opencl_kernel_modern_register_scan =
+"inline void scan_two_nonces_vec(u32 fast0, u32 fast1, u32 fast2, u32 fast3,\n"
+"                                u32 fast4, u32 fast5, u32 fast6, u32 fast7,\n"
+"                                u32 target0, u32 target1, u32 target2, u32 target3,\n"
+"                                u32 target4, u32 target5, u32 target6, u32 target7,\n"
+"                                u32 tail0, u32 tail1, u32 tail2, u32 nonce0, int second_valid,\n"
+"                                u32 max_results,\n"
+"                                __global volatile u32 *result_count,\n"
+"                                __global u32 *matches) {\n"
+"  u32v nonce = (u32v)(nonce0, nonce0 + 1U);\n"
+"  u32v s[8];\n"
+"  s[0]=(u32v)(fast0); s[1]=(u32v)(fast1); s[2]=(u32v)(fast2); s[3]=(u32v)(fast3);\n"
+"  s[4]=(u32v)(fast4); s[5]=(u32v)(fast5); s[6]=(u32v)(fast6); s[7]=(u32v)(fast7);\n"
+"  u32v w[16];\n"
+"  w[0]=(u32v)(tail0); w[1]=(u32v)(tail1); w[2]=(u32v)(tail2); w[3]=bswap32v(nonce);\n"
+"  w[4]=(u32v)(0x80000000U); w[5]=(u32v)(0U); w[6]=(u32v)(0U); w[7]=(u32v)(0U);\n"
+"  w[8]=(u32v)(0U); w[9]=(u32v)(0U); w[10]=(u32v)(0U); w[11]=(u32v)(0U);\n"
+"  w[12]=(u32v)(0U); w[13]=(u32v)(0U); w[14]=(u32v)(0U); w[15]=(u32v)(640U);\n"
+"  compress_vec2(s, w);\n"
+"  u32v h[8];\n"
+"  h[0]=(u32v)(0x6a09e667U); h[1]=(u32v)(0xbb67ae85U); h[2]=(u32v)(0x3c6ef372U); h[3]=(u32v)(0xa54ff53aU);\n"
+"  h[4]=(u32v)(0x510e527fU); h[5]=(u32v)(0x9b05688cU); h[6]=(u32v)(0x1f83d9abU); h[7]=(u32v)(0x5be0cd19U);\n"
+"  w[0]=s[0]; w[1]=s[1]; w[2]=s[2]; w[3]=s[3]; w[4]=s[4]; w[5]=s[5]; w[6]=s[6]; w[7]=s[7];\n"
+"  w[8]=(u32v)(0x80000000U); w[9]=(u32v)(0U); w[10]=(u32v)(0U); w[11]=(u32v)(0U);\n"
+"  w[12]=(u32v)(0U); w[13]=(u32v)(0U); w[14]=(u32v)(0U); w[15]=(u32v)(256U);\n"
+"  compress_vec2(h, w);\n"
+"  if (meets_target_words(h[0].s0,h[1].s0,h[2].s0,h[3].s0,h[4].s0,h[5].s0,h[6].s0,h[7].s0,target0,target1,target2,target3,target4,target5,target6,target7)) {\n"
+"    store_match_words(nonce0,h[0].s0,h[1].s0,h[2].s0,h[3].s0,h[4].s0,h[5].s0,h[6].s0,h[7].s0,max_results,result_count,matches);\n"
+"  }\n"
+"  if (second_valid && meets_target_words(h[0].s1,h[1].s1,h[2].s1,h[3].s1,h[4].s1,h[5].s1,h[6].s1,h[7].s1,target0,target1,target2,target3,target4,target5,target6,target7)) {\n"
+"    store_match_words(nonce0 + 1U,h[0].s1,h[1].s1,h[2].s1,h[3].s1,h[4].s1,h[5].s1,h[6].s1,h[7].s1,max_results,result_count,matches);\n"
+"  }\n"
+"}\n";
+
+static const char *k_opencl_kernel_modern_register_kernel =
+"#define SCAN_KERNEL_ARGS \\\n"
+"  u32 fast0, u32 fast1, u32 fast2, u32 fast3, \\\n"
+"  u32 fast4, u32 fast5, u32 fast6, u32 fast7, \\\n"
+"  u32 target0, u32 target1, u32 target2, u32 target3, \\\n"
+"  u32 target4, u32 target5, u32 target6, u32 target7, \\\n"
+"  u32 tail0, u32 tail1, u32 tail2, \\\n"
+"  u32 start_nonce, u32 nonce_count, \\\n"
+"  u32 nonces_per_work_item, \\\n"
+"  u32 max_results, \\\n"
+"  __global volatile u32 *result_count, \\\n"
+"  __global u32 *matches\n"
+"__kernel void modern_scan_nonce_range_register_heavy(SCAN_KERNEL_ARGS) {\n"
+"  (void)nonces_per_work_item;\n"
+"  u32 base_nonce = (u32)get_global_id(0) * 2U;\n"
+"  if (base_nonce >= nonce_count) return;\n"
+"  scan_two_nonces_vec(fast0, fast1, fast2, fast3, fast4, fast5, fast6, fast7,\n"
+"                      target0, target1, target2, target3, target4, target5, target6, target7,\n"
+"                      tail0, tail1, tail2, start_nonce + base_nonce, base_nonce + 1U < nonce_count,\n"
+"                      max_results, result_count, matches);\n"
+"}\n";
+
 static void set_error(char *error, size_t error_size, const char *message, cl_int code) {
     if (error == NULL || error_size == 0) {
         return;
@@ -508,8 +641,57 @@ static const char *kernel_name_for_npi(uint32_t nonces_per_work_item) {
     }
 }
 
+static uint32_t kernel_variant_fixed_npi(int variant) {
+    switch (variant) {
+    case MINER_OPENCL_KERNEL_FIXED_NPI1:
+        return 1U;
+    case MINER_OPENCL_KERNEL_FIXED_NPI2:
+        return 2U;
+    case MINER_OPENCL_KERNEL_FIXED_NPI4:
+        return 4U;
+    default:
+        return 0U;
+    }
+}
+
+static uint32_t kernel_variant_forced_npi(int variant) {
+    uint32_t fixed_npi = kernel_variant_fixed_npi(variant);
+    if (fixed_npi != 0) {
+        return fixed_npi;
+    }
+    if (variant == MINER_OPENCL_KERNEL_REGISTER_HEAVY) {
+        return 2U;
+    }
+    return 0U;
+}
+
+static int kernel_variant_modern_only(int variant) {
+    return kernel_variant_fixed_npi(variant) != 0 ||
+        variant == MINER_OPENCL_KERNEL_REGISTER_HEAVY;
+}
+
+static const char *kernel_name_for_variant(int variant, uint32_t nonces_per_work_item) {
+    switch (variant) {
+    case MINER_OPENCL_KERNEL_FIXED_NPI1:
+        return "modern_scan_nonce_range_fixed_npi1";
+    case MINER_OPENCL_KERNEL_FIXED_NPI2:
+        return "modern_scan_nonce_range_fixed_npi2";
+    case MINER_OPENCL_KERNEL_FIXED_NPI4:
+        return "modern_scan_nonce_range_fixed_npi4";
+    case MINER_OPENCL_KERNEL_REGISTER_HEAVY:
+        return "modern_scan_nonce_range_register_heavy";
+    default:
+        return kernel_name_for_npi(nonces_per_work_item);
+    }
+}
+
 static int normalize_kernel_variant(int variant) {
-    if (variant == MINER_OPENCL_KERNEL_COMPACT || variant == MINER_OPENCL_KERNEL_UNROLLED) {
+    if (variant == MINER_OPENCL_KERNEL_COMPACT ||
+        variant == MINER_OPENCL_KERNEL_UNROLLED ||
+        variant == MINER_OPENCL_KERNEL_FIXED_NPI1 ||
+        variant == MINER_OPENCL_KERNEL_FIXED_NPI2 ||
+        variant == MINER_OPENCL_KERNEL_FIXED_NPI4 ||
+        variant == MINER_OPENCL_KERNEL_REGISTER_HEAVY) {
         return variant;
     }
     return MINER_OPENCL_KERNEL_AUTO;
@@ -539,6 +721,14 @@ static const char *opencl_kernel_variant_name(int variant) {
         return "compact";
     case MINER_OPENCL_KERNEL_UNROLLED:
         return "unrolled";
+    case MINER_OPENCL_KERNEL_FIXED_NPI1:
+        return "fixed-npi1";
+    case MINER_OPENCL_KERNEL_FIXED_NPI2:
+        return "fixed-npi2";
+    case MINER_OPENCL_KERNEL_FIXED_NPI4:
+        return "fixed-npi4";
+    case MINER_OPENCL_KERNEL_REGISTER_HEAVY:
+        return "register-heavy";
     default:
         return "auto";
     }
@@ -872,12 +1062,19 @@ int opencl_miner_resolve_devices(const miner_opencl_config_t *config,
 
 static int build_program(opencl_miner_t *miner, char *error, size_t error_size) {
     cl_int rc = CL_SUCCESS;
-    const char *sources[5];
-    size_t lengths[5];
+    const char *sources[8];
+    size_t lengths[8];
     cl_uint source_count = 0;
     int use_modern_unrolled =
         miner->backend_variant == MINER_OPENCL_BACKEND_MODERN &&
         miner->kernel_variant == MINER_OPENCL_KERNEL_UNROLLED;
+    int use_modern_fixed =
+        miner->backend_variant == MINER_OPENCL_BACKEND_MODERN &&
+        kernel_variant_fixed_npi(miner->kernel_variant) != 0;
+    int use_modern_register =
+        miner->backend_variant == MINER_OPENCL_BACKEND_MODERN &&
+        miner->kernel_variant == MINER_OPENCL_KERNEL_REGISTER_HEAVY;
+    int use_modern_scalar = use_modern_unrolled || use_modern_fixed || use_modern_register;
 
     if (miner->kernel_variant == MINER_OPENCL_KERNEL_COMPACT) {
         sources[source_count] = k_opencl_kernel_compact;
@@ -888,7 +1085,7 @@ static int build_program(opencl_miner_t *miner, char *error, size_t error_size) 
         sources[source_count] = k_opencl_kernel_rounds;
         lengths[source_count++] = strlen(k_opencl_kernel_rounds);
     }
-    if (use_modern_unrolled) {
+    if (use_modern_scalar) {
         sources[source_count] = k_opencl_kernel_modern_scalar_macro;
         lengths[source_count++] = strlen(k_opencl_kernel_modern_scalar_macro);
         sources[source_count] = k_opencl_kernel_modern_tail_helpers;
@@ -897,8 +1094,17 @@ static int build_program(opencl_miner_t *miner, char *error, size_t error_size) 
         sources[source_count] = k_opencl_kernel_tail_helpers;
         lengths[source_count++] = strlen(k_opencl_kernel_tail_helpers);
     }
-    sources[source_count] = k_opencl_kernel_tail_kernels;
-    lengths[source_count++] = strlen(k_opencl_kernel_tail_kernels);
+    if (use_modern_register) {
+        sources[source_count] = k_opencl_kernel_modern_register_prefix;
+        lengths[source_count++] = strlen(k_opencl_kernel_modern_register_prefix);
+        sources[source_count] = k_opencl_kernel_modern_register_scan;
+        lengths[source_count++] = strlen(k_opencl_kernel_modern_register_scan);
+    }
+    const char *tail_kernels = use_modern_register ?
+        k_opencl_kernel_modern_register_kernel :
+        (use_modern_fixed ? k_opencl_kernel_modern_fixed_kernels : k_opencl_kernel_tail_kernels);
+    sources[source_count] = tail_kernels;
+    lengths[source_count++] = strlen(tail_kernels);
 
     miner->program = clCreateProgramWithSource(miner->context, source_count, sources, lengths, &rc);
     if (rc != CL_SUCCESS) {
@@ -927,7 +1133,10 @@ static int build_program(opencl_miner_t *miner, char *error, size_t error_size) 
         return -1;
     }
 
-    miner->kernel = clCreateKernel(miner->program, kernel_name_for_npi(miner->nonces_per_work_item), &rc);
+    miner->kernel = clCreateKernel(miner->program,
+                                   kernel_name_for_variant(miner->kernel_variant,
+                                                           miner->nonces_per_work_item),
+                                   &rc);
     if (rc != CL_SUCCESS) {
         set_error(error, error_size, "failed to create OpenCL kernel", rc);
         return -1;
@@ -972,8 +1181,8 @@ opencl_miner_t *opencl_miner_create(const miner_opencl_config_t *config,
     int requested_backend_variant = config != NULL ?
         normalize_backend_variant(config->backend_variant) :
         MINER_OPENCL_BACKEND_AUTO;
-    miner->kernel_variant = requested_kernel_variant == MINER_OPENCL_KERNEL_COMPACT ?
-        MINER_OPENCL_KERNEL_COMPACT : MINER_OPENCL_KERNEL_UNROLLED;
+    miner->kernel_variant = requested_kernel_variant == MINER_OPENCL_KERNEL_AUTO ?
+        MINER_OPENCL_KERNEL_UNROLLED : requested_kernel_variant;
     if (miner->batch_size < 1024U) {
         miner->batch_size = 1024U;
     }
@@ -1008,6 +1217,19 @@ opencl_miner_t *opencl_miner_create(const miner_opencl_config_t *config,
         return NULL;
     }
     miner->backend_variant = resolved_backend;
+    if (kernel_variant_modern_only(miner->kernel_variant) &&
+        miner->backend_variant != MINER_OPENCL_BACKEND_MODERN) {
+        set_error(error,
+                  error_size,
+                  "modern-only OpenCL kernels require backend=modern",
+                  CL_SUCCESS);
+        opencl_miner_destroy(miner);
+        return NULL;
+    }
+    uint32_t forced_npi = kernel_variant_forced_npi(miner->kernel_variant);
+    if (forced_npi != 0) {
+        miner->nonces_per_work_item = forced_npi;
+    }
 
     size_t max_work_group = 0;
     (void)clGetDeviceInfo(miner->device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(max_work_group), &max_work_group, NULL);
