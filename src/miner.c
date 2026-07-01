@@ -46,6 +46,7 @@ typedef struct {
     sha256_midstate_t midstate;
     uint32_t tail_words[4];
     uint32_t target_words[8];
+    uint64_t pause_epoch;
     int valid;
 } active_job_t;
 
@@ -63,6 +64,7 @@ struct miner {
     int opencl_started;
     int stop;
     int paused;
+    uint64_t pause_epoch;
     miner_opencl_config_t opencl_config;
 
     active_job_t job;
@@ -436,7 +438,7 @@ static int copy_job_and_nonce_range_sized(miner_t *miner,
         batch_size = MINER_BATCH_SIZE;
     }
     pthread_mutex_lock(&miner->lock);
-    if (miner->job.valid) {
+    if (!miner->stop && !miner->paused && miner->job.valid) {
         if (miner->next_nonce > UINT32_MAX) {
             miner->job.valid = 0;
             miner->nonce_exhausted = 1;
@@ -444,6 +446,7 @@ static int copy_job_and_nonce_range_sized(miner_t *miner,
             uint64_t remaining = (uint64_t)UINT32_MAX - miner->next_nonce + 1U;
             uint32_t range = remaining < batch_size ? (uint32_t)remaining : batch_size;
             *job = miner->job;
+            job->pause_epoch = miner->pause_epoch;
             *start_nonce = (uint32_t)miner->next_nonce;
             *count = range;
             miner->next_nonce += range;
@@ -459,6 +462,15 @@ typedef struct {
     const active_job_t *job;
 } scan_match_context_t;
 
+static int scan_result_still_current_locked(const miner_t *miner, const active_job_t *job) {
+    return miner != NULL &&
+           job != NULL &&
+           !miner->stop &&
+           !miner->paused &&
+           miner->pause_epoch == job->pause_epoch &&
+           miner->job.public_job.seq == job->public_job.seq;
+}
+
 static void queue_scan_match(void *opaque, uint32_t nonce, const uint32_t hash_words[8]) {
     scan_match_context_t *ctx = (scan_match_context_t *)opaque;
     uint8_t hash[32];
@@ -469,7 +481,7 @@ static void queue_scan_match(void *opaque, uint32_t nonce, const uint32_t hash_w
 
     sha256d_words_to_hash(hash_words, hash);
     pthread_mutex_lock(&ctx->miner->lock);
-    if (ctx->miner->job.valid && ctx->miner->job.public_job.seq == ctx->job->public_job.seq) {
+    if (scan_result_still_current_locked(ctx->miner, ctx->job)) {
         queue_share_locked(ctx->miner, &ctx->job->public_job, nonce, hash);
     }
     pthread_mutex_unlock(&ctx->miner->lock);
@@ -514,9 +526,11 @@ static void *worker_main(void *opaque) {
         local_hashes += nonce_count;
 
         pthread_mutex_lock(&miner->lock);
-        miner->hashes += local_hashes;
-        if (id >= 0 && id < miner->thread_count) {
-            miner->thread_hashes[id] += local_hashes;
+        if (scan_result_still_current_locked(miner, &job)) {
+            miner->hashes += local_hashes;
+            if (id >= 0 && id < miner->thread_count) {
+                miner->thread_hashes[id] += local_hashes;
+            }
         }
         pthread_mutex_unlock(&miner->lock);
     }
@@ -616,9 +630,11 @@ static void *opencl_worker_main(void *opaque) {
         }
 
         pthread_mutex_lock(&miner->lock);
-        miner->hashes += nonce_count;
-        if (id >= 0 && id < miner->opencl_started) {
-            miner->opencl_hashes[id] += nonce_count;
+        if (scan_result_still_current_locked(miner, &job)) {
+            miner->hashes += nonce_count;
+            if (id >= 0 && id < miner->opencl_started) {
+                miner->opencl_hashes[id] += nonce_count;
+            }
         }
         pthread_mutex_unlock(&miner->lock);
     }
@@ -926,7 +942,11 @@ void miner_set_paused(miner_t *miner, int paused) {
     }
 
     pthread_mutex_lock(&miner->lock);
-    miner->paused = paused ? 1 : 0;
+    int next_paused = paused ? 1 : 0;
+    if (!miner->paused && next_paused) {
+        ++miner->pause_epoch;
+    }
+    miner->paused = next_paused;
     pthread_cond_broadcast(&miner->work_cond);
     pthread_mutex_unlock(&miner->lock);
 }
