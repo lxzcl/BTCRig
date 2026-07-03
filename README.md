@@ -346,17 +346,9 @@ Each OpenCL device runs a self-test before mining starts. Devices that fail the 
 - OpenCL devices run a self-test before mining. Devices that fail are skipped while remaining CPU/GPU workers can continue.
 - GitHub Actions builds packages but intentionally avoids running miner benchmarks on hosted runners.
 
-## Developer Donation
-
-BTCRig includes a 1% developer donation by default, approximately 1 minute out of every 100 minutes of active mining. It applies to all mining modes.
-
-When using solo mode, there is a very small chance that a block is found during the donation interval, which would donate the full block reward. The current source enforces a compiled minimum donation level of 1%; edit the donation constants and rebuild if you need a different donation policy.
-
-Donation address:
-
-```text
-bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
-```
+## Developers
+The software includes a 1% developer donation by default (approximately 1 minute donated out of every 100), which applies to all mining modes. Currently, there is no way to automatically distinguish between PPLNS pool mining and solo mode in code. Pool addresses use PPLNS by default. If you are using solo mode, please note: there is an extremely small chance that a block is found during a donation interval, resulting in the entire block reward being donated. To modify the donation percentage, edit the donation parameter in the source code and recompile.
+BTC:bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
 
 ## License
 
