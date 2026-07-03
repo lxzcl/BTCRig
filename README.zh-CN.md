@@ -38,10 +38,18 @@ BTCRig 将 Windows、Linux、Android/Termux、x86 PC 和 ARM 开发板上的闲�
 
 ### 下载版本
 
-Windows 构建包位于 [Releases 页面](https://github.com/lxzcl/BTCRig/releases)。解压 zip、修改 `config.json` 后运行：
+Windows 和 Linux x86_64 构建包位于 [Releases 页面](https://github.com/lxzcl/BTCRig/releases)。
+
+Windows 解压 zip、修改 `config.json` 后运行：
 
 ```powershell
 .\btc_stratum.exe
+```
+
+Linux 解压 tarball、修改 `config.json` 后运行：
+
+```bash
+./btc_stratum
 ```
 
 ### Ubuntu / Debian

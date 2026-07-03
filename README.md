@@ -38,10 +38,18 @@ BTCRig turns idle CPU resources on Windows, Linux, Android/Termux, x86 PCs, and 
 
 ### Download a release
 
-Windows packages are published on the [Releases page](https://github.com/lxzcl/BTCRig/releases). Extract the zip, edit `config.json`, then run:
+Windows and Linux x86_64 packages are published on the [Releases page](https://github.com/lxzcl/BTCRig/releases).
+
+On Windows, extract the zip, edit `config.json`, then run:
 
 ```powershell
 .\btc_stratum.exe
+```
+
+On Linux, extract the tarball, edit `config.json`, then run:
+
+```bash
+./btc_stratum
 ```
 
 ### Ubuntu / Debian
