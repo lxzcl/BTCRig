@@ -12,9 +12,7 @@
 
 </div>
 
-BTCRig 是一个小型 C 项目，用来直观理解 Bitcoin 挖矿数据路径，而不是把关键细节藏起来。它包含本地 SHA256d 基准测试、Stratum V1 挖矿客户端和 TCP/TLS Stratum 代理，可运行在 Windows、Linux、Android/Termux、x86 PC、ARM 开发板、可选 OpenCL GPU 以及可选 NVIDIA CUDA GPU 上。
-
-这不是 ASIC 替代品。Bitcoin 主网挖矿已经由专用硬件主导；BTCRig 更适合作为基准测试、协议测试客户端、学习项目、代理工具，以及比较 CPU/GPU SHA256d 路径的轻量实验平台。
+BTCRig 是一个跨平台 C 项目，提供 SHA256d 基准、Stratum V1 挖矿客户端和 TCP/TLS Stratum 代理，支持 CPU、OpenCL 和 NVIDIA CUDA 后端。它可运行在 Windows、Linux、Android/Termux、x86 PC、ARM 开发板以及带 GPU 的设备上，在通用 CPU/GPU 平台上提供尽可能强的 SHA256d 挖矿表现。
 
 ## 程序组成
 

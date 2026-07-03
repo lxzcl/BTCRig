@@ -12,9 +12,7 @@
 
 </div>
 
-BTCRig is a small C project for exploring the Bitcoin mining data path without hiding the moving parts. It includes a local SHA256d benchmark, a Stratum V1 mining client, and a TCP/TLS Stratum proxy. It runs on Windows, Linux, Android/Termux, x86 PCs, ARM boards, optional OpenCL GPUs, and optional NVIDIA CUDA GPUs.
-
-This is not an ASIC replacement. Bitcoin mainnet mining is dominated by dedicated hardware; BTCRig is most useful as a benchmark, protocol test client, learning project, proxy, and lightweight tool for comparing CPU/GPU SHA256d paths.
+BTCRig is a cross-platform C project that provides a SHA256d benchmark, a Stratum V1 mining client, and a TCP/TLS Stratum proxy, with CPU, OpenCL, and NVIDIA CUDA backends. It runs on Windows, Linux, Android/Termux, x86 PCs, ARM boards, and GPU-equipped devices, delivering the strongest possible SHA256d mining performance on general CPU/GPU platforms.
 
 ## Programs
 
