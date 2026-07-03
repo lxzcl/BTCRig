@@ -109,6 +109,7 @@ static int run_opencl_self_test(const miner_opencl_config_t *config) {
         device_config.local_work_size = devices[i].local_work_size;
         device_config.nonces_per_work_item = devices[i].nonces_per_work_item;
         device_config.max_results = devices[i].max_results;
+        device_config.backend_variant = devices[i].backend_variant;
         device_config.kernel_variant = devices[i].kernel_variant;
 
         opencl_self_test_result_t result;
@@ -325,10 +326,67 @@ static const char *opencl_kernel_variant_name(int variant) {
         return "compact";
     case MINER_OPENCL_KERNEL_UNROLLED:
         return "unrolled";
+    case MINER_OPENCL_KERNEL_FIXED_NPI1:
+        return "fixed-npi1";
+    case MINER_OPENCL_KERNEL_FIXED_NPI2:
+        return "fixed-npi2";
+    case MINER_OPENCL_KERNEL_FIXED_NPI4:
+        return "fixed-npi4";
+    case MINER_OPENCL_KERNEL_REGISTER_HEAVY:
+        return "register-heavy";
     default:
         return "auto";
     }
 }
+
+static const char *opencl_backend_variant_name(int variant) {
+    switch (variant) {
+    case MINER_OPENCL_BACKEND_COMPAT10:
+        return "compat10";
+    case MINER_OPENCL_BACKEND_MODERN:
+        return "modern";
+    default:
+        return "auto";
+    }
+}
+
+#if defined(BTC_MINER_OPENCL)
+static uint32_t opencl_kernel_fixed_npi(int variant) {
+    switch (variant) {
+    case MINER_OPENCL_KERNEL_FIXED_NPI1:
+        return 1U;
+    case MINER_OPENCL_KERNEL_FIXED_NPI2:
+        return 2U;
+    case MINER_OPENCL_KERNEL_FIXED_NPI4:
+        return 4U;
+    default:
+        return 0U;
+    }
+}
+
+static uint32_t opencl_kernel_forced_npi(int variant) {
+    uint32_t fixed_npi = opencl_kernel_fixed_npi(variant);
+    if (fixed_npi != 0) {
+        return fixed_npi;
+    }
+    if (variant == MINER_OPENCL_KERNEL_REGISTER_HEAVY) {
+        return 2U;
+    }
+    return 0U;
+}
+
+static int opencl_kernel_modern_only(int variant) {
+    return opencl_kernel_fixed_npi(variant) != 0 ||
+        variant == MINER_OPENCL_KERNEL_REGISTER_HEAVY;
+}
+
+static int opencl_kernel_backend_compatible(int backend, int kernel) {
+    if (opencl_kernel_modern_only(kernel)) {
+        return backend == MINER_OPENCL_BACKEND_MODERN;
+    }
+    return 1;
+}
+#endif
 
 static int parse_opencl_kernel_variant(const char *value, int fallback) {
     if (value == NULL || value[0] == '\0' || string_equals_ci(value, "auto")) {
@@ -339,6 +397,43 @@ static int parse_opencl_kernel_variant(const char *value, int fallback) {
     }
     if (string_equals_ci(value, "unrolled")) {
         return MINER_OPENCL_KERNEL_UNROLLED;
+    }
+    if (string_equals_ci(value, "fixed-npi1") ||
+        string_equals_ci(value, "fixed_npi1") ||
+        string_equals_ci(value, "modern-fixed-npi1") ||
+        string_equals_ci(value, "modern_fixed_npi1")) {
+        return MINER_OPENCL_KERNEL_FIXED_NPI1;
+    }
+    if (string_equals_ci(value, "fixed-npi2") ||
+        string_equals_ci(value, "fixed_npi2") ||
+        string_equals_ci(value, "modern-fixed-npi2") ||
+        string_equals_ci(value, "modern_fixed_npi2")) {
+        return MINER_OPENCL_KERNEL_FIXED_NPI2;
+    }
+    if (string_equals_ci(value, "fixed-npi4") ||
+        string_equals_ci(value, "fixed_npi4") ||
+        string_equals_ci(value, "modern-fixed-npi4") ||
+        string_equals_ci(value, "modern_fixed_npi4")) {
+        return MINER_OPENCL_KERNEL_FIXED_NPI4;
+    }
+    if (string_equals_ci(value, "register-heavy") ||
+        string_equals_ci(value, "register_heavy") ||
+        string_equals_ci(value, "modern-register-heavy") ||
+        string_equals_ci(value, "modern_register_heavy")) {
+        return MINER_OPENCL_KERNEL_REGISTER_HEAVY;
+    }
+    return fallback;
+}
+
+static int parse_opencl_backend_variant(const char *value, int fallback) {
+    if (value == NULL || value[0] == '\0' || string_equals_ci(value, "auto")) {
+        return MINER_OPENCL_BACKEND_AUTO;
+    }
+    if (string_equals_ci(value, "compat10") || string_equals_ci(value, "compat")) {
+        return MINER_OPENCL_BACKEND_COMPAT10;
+    }
+    if (string_equals_ci(value, "modern")) {
+        return MINER_OPENCL_BACKEND_MODERN;
     }
     return fallback;
 }
@@ -507,6 +602,12 @@ static int load_config_file(app_config_t *config, const char *path, int required
         config->opencl.nonces_per_work_item = json_u32_value(json_object_get(opencl, "npi"), config->opencl.nonces_per_work_item);
         config->opencl.max_results = json_u32_value(json_object_get(opencl, "max-results"), config->opencl.max_results);
         config->opencl.max_results = json_u32_value(json_object_get(opencl, "max_results"), config->opencl.max_results);
+        config->opencl.backend_variant = parse_opencl_backend_variant(json_string_value(json_object_get(opencl, "backend")),
+                                                                      config->opencl.backend_variant);
+        config->opencl.backend_variant = parse_opencl_backend_variant(json_string_value(json_object_get(opencl, "backend-variant")),
+                                                                      config->opencl.backend_variant);
+        config->opencl.backend_variant = parse_opencl_backend_variant(json_string_value(json_object_get(opencl, "backend_variant")),
+                                                                      config->opencl.backend_variant);
         config->opencl.kernel_variant = parse_opencl_kernel_variant(json_string_value(json_object_get(opencl, "kernel")),
                                                                     config->opencl.kernel_variant);
         config->opencl.kernel_variant = parse_opencl_kernel_variant(json_string_value(json_object_get(opencl, "kernel-variant")),
@@ -537,6 +638,12 @@ static int load_config_file(app_config_t *config, const char *path, int required
                 dst->nonces_per_work_item = json_u32_value(json_object_get(device, "npi"), dst->nonces_per_work_item);
                 dst->max_results = json_u32_value(json_object_get(device, "max-results"), config->opencl.max_results);
                 dst->max_results = json_u32_value(json_object_get(device, "max_results"), dst->max_results);
+                dst->backend_variant = parse_opencl_backend_variant(json_string_value(json_object_get(device, "backend")),
+                                                                    config->opencl.backend_variant);
+                dst->backend_variant = parse_opencl_backend_variant(json_string_value(json_object_get(device, "backend-variant")),
+                                                                    dst->backend_variant);
+                dst->backend_variant = parse_opencl_backend_variant(json_string_value(json_object_get(device, "backend_variant")),
+                                                                    dst->backend_variant);
                 dst->kernel_variant = parse_opencl_kernel_variant(json_string_value(json_object_get(device, "kernel")),
                                                                   config->opencl.kernel_variant);
                 dst->kernel_variant = parse_opencl_kernel_variant(json_string_value(json_object_get(device, "kernel-variant")),
@@ -719,6 +826,15 @@ static int autotune_hashrate_is_better(double candidate, double best) {
     return candidate > best * threshold;
 }
 
+static int autotune_batch_hashrate_is_better(double candidate, double best) {
+    const double threshold = 1.01;
+
+    if (best <= 0.0) {
+        return 1;
+    }
+    return candidate > best * threshold;
+}
+
 static void autotune_opencl_device_params(const miner_opencl_config_t *base,
                                           miner_opencl_device_config_t *device,
                                           int device_index,
@@ -749,21 +865,29 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
         1048576U,
         2097152U,
         4194304U,
+        8388608U,
+        16777216U,
     };
     const int kernel_candidates_raw[] = {
         device->kernel_variant,
         base->kernel_variant,
         MINER_OPENCL_KERNEL_UNROLLED,
         MINER_OPENCL_KERNEL_COMPACT,
+        MINER_OPENCL_KERNEL_FIXED_NPI1,
+        MINER_OPENCL_KERNEL_FIXED_NPI2,
+        MINER_OPENCL_KERNEL_FIXED_NPI4,
+        MINER_OPENCL_KERNEL_REGISTER_HEAVY,
     };
     uint32_t local_candidates[sizeof(local_candidates_raw) / sizeof(local_candidates_raw[0])];
     uint32_t npi_candidates[sizeof(npi_candidates_raw) / sizeof(npi_candidates_raw[0])];
     uint32_t batch_candidates[sizeof(batch_candidates_raw) / sizeof(batch_candidates_raw[0])];
     uint32_t kernel_candidates[sizeof(kernel_candidates_raw) / sizeof(kernel_candidates_raw[0])];
+    uint32_t backend_candidates[2];
     int local_count = 0;
     int npi_count = 0;
     int batch_count = 0;
     int kernel_count = 0;
+    int backend_count = 0;
 
     for (size_t i = 0; i < sizeof(local_candidates_raw) / sizeof(local_candidates_raw[0]); ++i) {
         uint32_t value = local_candidates_raw[i];
@@ -784,59 +908,83 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
         }
     }
     for (size_t i = 0; i < sizeof(kernel_candidates_raw) / sizeof(kernel_candidates_raw[0]); ++i) {
-        uint32_t value = (uint32_t)(kernel_candidates_raw[i] == MINER_OPENCL_KERNEL_COMPACT ?
-            MINER_OPENCL_KERNEL_COMPACT : MINER_OPENCL_KERNEL_UNROLLED);
+        uint32_t value = (uint32_t)kernel_candidates_raw[i];
+        if (value < MINER_OPENCL_KERNEL_COMPACT || value > MINER_OPENCL_KERNEL_REGISTER_HEAVY) {
+            continue;
+        }
         if (!value_seen_u32(kernel_candidates, kernel_count, value)) {
             kernel_candidates[kernel_count++] = value;
         }
+    }
+    int requested_backend = device->backend_variant != MINER_OPENCL_BACKEND_AUTO ?
+        device->backend_variant : base->backend_variant;
+    if (requested_backend == MINER_OPENCL_BACKEND_COMPAT10) {
+        backend_candidates[backend_count++] = MINER_OPENCL_BACKEND_COMPAT10;
+    } else if (requested_backend == MINER_OPENCL_BACKEND_MODERN) {
+        backend_candidates[backend_count++] = MINER_OPENCL_BACKEND_MODERN;
+    } else {
+        backend_candidates[backend_count++] = MINER_OPENCL_BACKEND_COMPAT10;
+        backend_candidates[backend_count++] = MINER_OPENCL_BACKEND_MODERN;
     }
 
     miner_opencl_device_config_t best_device = *device;
     double best_hashrate = 0.0;
     int best_ok = 0;
 
-    printf("%s[AUTOTUNE]%s tuning gpu%d OpenCL kernel/local-work-size/npi\n",
+    printf("%s[AUTOTUNE]%s tuning gpu%d OpenCL backend/kernel/local-work-size/npi\n",
            C_CYAN,
            C_RESET,
            device_index);
 
+    for (int bi = 0; bi < backend_count; ++bi) {
     for (int ki = 0; ki < kernel_count; ++ki) {
+        if (!opencl_kernel_backend_compatible((int)backend_candidates[bi], (int)kernel_candidates[ki])) {
+            continue;
+        }
         for (int li = 0; li < local_count; ++li) {
             for (int ni = 0; ni < npi_count; ++ni) {
             miner_opencl_device_config_t candidate = *device;
             miner_opencl_config_t opencl;
             int ok = 0;
 
+            candidate.backend_variant = (int)backend_candidates[bi];
             candidate.kernel_variant = (int)kernel_candidates[ki];
+            uint32_t forced_npi = opencl_kernel_forced_npi(candidate.kernel_variant);
+            if (forced_npi != 0 && npi_candidates[ni] != forced_npi) {
+                continue;
+            }
             candidate.local_work_size = local_candidates[li];
-            candidate.nonces_per_work_item = npi_candidates[ni];
+            candidate.nonces_per_work_item = forced_npi != 0 ? forced_npi : npi_candidates[ni];
             candidate.batch_size = best_device.batch_size;
             autotune_device_list_config(base, &candidate, 1, &opencl);
 
-            printf("%s[AUTOTUNE]%s testing gpu%d kernel=%s batch=%u local=%u npi=%u\n",
+            printf("%s[AUTOTUNE]%s testing gpu%d backend=%s kernel=%s batch=%u local=%u npi=%u\n",
                    C_CYAN,
                    C_RESET,
                    device_index,
+                   opencl_backend_variant_name(candidate.backend_variant),
                    opencl_kernel_variant_name(candidate.kernel_variant),
                    candidate.batch_size,
                    candidate.local_work_size,
                    candidate.nonces_per_work_item);
             double hashrate = autotune_run_mode(0, &opencl, seconds, &ok);
             if (ok) {
-                printf("%s[AUTOTUNE]%s gpu%d kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
+                printf("%s[AUTOTUNE]%s gpu%d backend=%s kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
                        C_CYAN,
                        C_RESET,
                        device_index,
+                       opencl_backend_variant_name(candidate.backend_variant),
                        opencl_kernel_variant_name(candidate.kernel_variant),
                        candidate.batch_size,
                        candidate.local_work_size,
                        candidate.nonces_per_work_item,
                        hashrate / 1000000.0);
             } else {
-                printf("%s[AUTOTUNE]%s gpu%d kernel=%s batch=%u local=%u npi=%u unavailable\n",
+                printf("%s[AUTOTUNE]%s gpu%d backend=%s kernel=%s batch=%u local=%u npi=%u unavailable\n",
                        C_YELLOW,
                        C_RESET,
                        device_index,
+                       opencl_backend_variant_name(candidate.backend_variant),
                        opencl_kernel_variant_name(candidate.kernel_variant),
                        candidate.batch_size,
                        candidate.local_work_size,
@@ -850,13 +998,15 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
         }
         }
     }
+    }
 
     if (best_ok) {
         *device = best_device;
-        printf("%s[AUTOTUNE]%s gpu%d selected kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
+        printf("%s[AUTOTUNE]%s gpu%d selected backend=%s kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
                C_BRIGHT_GREEN,
                C_RESET,
                device_index,
+               opencl_backend_variant_name(device->backend_variant),
                opencl_kernel_variant_name(device->kernel_variant),
                device->batch_size,
                device->local_work_size,
@@ -881,46 +1031,50 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
         candidate.batch_size = batch_candidates[bi];
         autotune_device_list_config(base, &candidate, 1, &opencl);
 
-        printf("%s[AUTOTUNE]%s testing gpu%d kernel=%s batch=%u local=%u npi=%u\n",
+        printf("%s[AUTOTUNE]%s testing gpu%d backend=%s kernel=%s batch=%u local=%u npi=%u\n",
                C_CYAN,
                C_RESET,
                device_index,
+               opencl_backend_variant_name(candidate.backend_variant),
                opencl_kernel_variant_name(candidate.kernel_variant),
                candidate.batch_size,
                candidate.local_work_size,
                candidate.nonces_per_work_item);
         double hashrate = autotune_run_mode(0, &opencl, seconds, &ok);
         if (ok) {
-            printf("%s[AUTOTUNE]%s gpu%d kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
+            printf("%s[AUTOTUNE]%s gpu%d backend=%s kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
                    C_CYAN,
                    C_RESET,
                    device_index,
+                   opencl_backend_variant_name(candidate.backend_variant),
                    opencl_kernel_variant_name(candidate.kernel_variant),
                    candidate.batch_size,
                    candidate.local_work_size,
                    candidate.nonces_per_work_item,
                    hashrate / 1000000.0);
         } else {
-            printf("%s[AUTOTUNE]%s gpu%d kernel=%s batch=%u local=%u npi=%u unavailable\n",
+            printf("%s[AUTOTUNE]%s gpu%d backend=%s kernel=%s batch=%u local=%u npi=%u unavailable\n",
                    C_YELLOW,
                    C_RESET,
                    device_index,
+                   opencl_backend_variant_name(candidate.backend_variant),
                    opencl_kernel_variant_name(candidate.kernel_variant),
                    candidate.batch_size,
                    candidate.local_work_size,
                    candidate.nonces_per_work_item);
         }
-        if (ok && autotune_hashrate_is_better(hashrate, best_hashrate)) {
+        if (ok && autotune_batch_hashrate_is_better(hashrate, best_hashrate)) {
             best_hashrate = hashrate;
             best_device = candidate;
             *device = best_device;
         }
     }
 
-    printf("%s[AUTOTUNE]%s gpu%d final kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
+    printf("%s[AUTOTUNE]%s gpu%d final backend=%s kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
            C_BRIGHT_GREEN,
            C_RESET,
            device_index,
+           opencl_backend_variant_name(device->backend_variant),
            opencl_kernel_variant_name(device->kernel_variant),
            device->batch_size,
            device->local_work_size,
@@ -1049,6 +1203,7 @@ static int save_autotune_config(const char *path,
     json_object_set_new(opencl, "local-work-size", json_integer((json_int_t)config->opencl.local_work_size));
     json_object_set_new(opencl, "nonces-per-work-item", json_integer((json_int_t)config->opencl.nonces_per_work_item));
     json_object_set_new(opencl, "max-results", json_integer((json_int_t)config->opencl.max_results));
+    json_object_set_new(opencl, "backend", json_string(opencl_backend_variant_name(config->opencl.backend_variant)));
     json_object_set_new(opencl, "kernel", json_string(opencl_kernel_variant_name(config->opencl.kernel_variant)));
     if (config->opencl.enabled && config->opencl.device_count > 0) {
         json_t *devices = json_array();
@@ -1070,6 +1225,7 @@ static int save_autotune_config(const char *path,
             json_object_set_new(item, "local-work-size", json_integer((json_int_t)device->local_work_size));
             json_object_set_new(item, "nonces-per-work-item", json_integer((json_int_t)device->nonces_per_work_item));
             json_object_set_new(item, "max-results", json_integer((json_int_t)device->max_results));
+            json_object_set_new(item, "backend", json_string(opencl_backend_variant_name(device->backend_variant)));
             json_object_set_new(item, "kernel", json_string(opencl_kernel_variant_name(device->kernel_variant)));
             json_array_append_new(devices, item);
         }
@@ -1123,6 +1279,7 @@ static int save_autotune_config(const char *path,
                     json_object_set_new(device_item, "batch-size", json_integer((json_int_t)device->batch_size));
                     json_object_set_new(device_item, "local-work-size", json_integer((json_int_t)device->local_work_size));
                     json_object_set_new(device_item, "nonces-per-work-item", json_integer((json_int_t)device->nonces_per_work_item));
+                    json_object_set_new(device_item, "backend", json_string(opencl_backend_variant_name(device->backend_variant)));
                     json_object_set_new(device_item, "kernel", json_string(opencl_kernel_variant_name(device->kernel_variant)));
                     json_array_append_new(devices, device_item);
                 }
@@ -1149,8 +1306,13 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     int result_count = 0;
     miner_opencl_config_t cpu_only_opencl;
 
+    memset(results, 0, sizeof(results));
+
     int full_threads = config->thread_count > 0 ? config->thread_count : default_thread_count();
     if (full_threads < 0) {
+        full_threads = 0;
+    }
+    if (!config->cpu_enabled) {
         full_threads = 0;
     }
     double seconds = config->autotune_seconds > 0.0 ? config->autotune_seconds : DEFAULT_AUTOTUNE_SECONDS;
@@ -1161,7 +1323,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
            C_CYAN,
            C_RESET,
            seconds,
-           tune_opencl ? "cpu,gpu-all,cpu+gpu-all,single-gpu,drop-one" : "cpu-only");
+           tune_opencl ? (full_threads > 0 ? "cpu,gpu-all,cpu+gpu-all,single-gpu,drop-one" : "gpu-only") : "cpu-only");
 
     autotune_disable_opencl(&cpu_only_opencl);
     if (full_threads > 0) {
@@ -1333,7 +1495,8 @@ static void usage(const char *argv0) {
     printf("     [-t threads] [-r retries] [--runtime seconds] [--stats seconds]\n");
     printf("     [--reconnect-delay seconds] [--donate-level N] [--no-mine]\n");
     printf("     [--no-cpu] [--opencl] [--opencl-all] [--opencl-platform N] [--opencl-device N]\n");
-    printf("     [--opencl-batch N] [--opencl-local N] [--opencl-npi N] [--opencl-kernel auto|compact|unrolled]\n");
+    printf("     [--opencl-batch N] [--opencl-local N] [--opencl-npi N]\n");
+    printf("     [--opencl-backend auto|compat10|modern] [--opencl-kernel auto|compact|unrolled|fixed-npi1|fixed-npi2|fixed-npi4|register-heavy]\n");
     printf("     [--autotune] [--no-autotune] [--autotune-seconds N]\n");
     printf("\nDefaults:\n");
     printf("  version: %s\n", BTCRIG_VERSION_TAG);
@@ -1348,7 +1511,8 @@ static void usage(const char *argv0) {
     printf("  threads: auto (%d recommended)\n", default_thread_count());
     printf("  opencl: manual enable uses all OpenCL GPU devices unless a device is selected; autotune may select it\n");
     printf("  opencl compat10: OpenCL 1.0/1.1 compatible, requires global int32 atomics on 1.0 devices\n");
-    printf("  opencl kernel: auto prefers unrolled and can fall back to compact; autotune tests compact and unrolled\n");
+    printf("  opencl backend auto: benchmarks compat10 and modern when supported\n");
+    printf("  opencl kernel: auto tests compact/unrolled plus modern fixed-npi and register-heavy variants when supported\n");
     printf("  autotune: enabled by default; GPU modes are benchmarked only when OpenCL is enabled\n");
     printf("  donate-level: %d%% (%s)\n",
            DONATION_DEFAULT_LEVEL,
@@ -1516,10 +1680,20 @@ int main(int argc, char **argv) {
         } else if ((strcmp(argv[i], "--opencl-npi") == 0 || strcmp(argv[i], "--opencl-nonces-per-work-item") == 0) && i + 1 < argc) {
             app_config.opencl.nonces_per_work_item = (uint32_t)strtoul(argv[++i], NULL, 10);
             worker_override = 1;
+        } else if (strcmp(argv[i], "--opencl-backend") == 0 && i + 1 < argc) {
+            int parsed = parse_opencl_backend_variant(argv[++i], -1);
+            if (parsed < 0) {
+                fprintf(stderr, "%s[CONFIG]%s invalid --opencl-backend, use auto, compat10, or modern\n",
+                        C_BRIGHT_RED,
+                        C_RESET);
+                return 2;
+            }
+            app_config.opencl.backend_variant = parsed;
+            worker_override = 1;
         } else if (strcmp(argv[i], "--opencl-kernel") == 0 && i + 1 < argc) {
             int parsed = parse_opencl_kernel_variant(argv[++i], -1);
             if (parsed < 0) {
-                fprintf(stderr, "%s[CONFIG]%s invalid --opencl-kernel, use auto, compact, or unrolled\n",
+                fprintf(stderr, "%s[CONFIG]%s invalid --opencl-kernel, use auto, compact, unrolled, fixed-npi1, fixed-npi2, fixed-npi4, or register-heavy\n",
                         C_BRIGHT_RED,
                         C_RESET);
                 return 2;
@@ -1595,7 +1769,7 @@ int main(int argc, char **argv) {
         (app_config.opencl.device_count > 0 ? "devices" :
             (app_config.opencl.all_devices ? "all-gpu" : "single"));
 
-    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mode=%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
+    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mode=%s backend=%s kernel=%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
            C_CYAN,
            C_RESET,
            app_config.pool_count,
@@ -1605,6 +1779,8 @@ int main(int argc, char **argv) {
            C_RESET,
            app_config.opencl.enabled ? "on" : "off",
            opencl_mode,
+           opencl_backend_variant_name(app_config.opencl.backend_variant),
+           opencl_kernel_variant_name(app_config.opencl.kernel_variant),
            mining_enabled ? "yes" : "no",
            app_config.reconnect_delay,
            MAX_RECONNECT_DELAY,

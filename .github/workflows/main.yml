@@ -1,4 +1,4 @@
-name: Windows Build
+name: Build
 
 on:
   workflow_dispatch:
@@ -13,15 +13,86 @@ on:
       - master
       - dev
     paths:
+      - ".github/workflows/main.yml"
+      - "src/**"
+      - "CMakeLists.txt"
       - "VERSION"
+      - "*.sh"
+      - "*.json"
+      - "README*.md"
+      - "BUILD_*.md"
+      - "PROXY*.md"
+  pull_request:
+    branches:
+      - master
+      - dev
+    paths:
+      - ".github/workflows/main.yml"
+      - "src/**"
+      - "CMakeLists.txt"
+      - "VERSION"
+      - "*.sh"
+      - "*.json"
+      - "README*.md"
+      - "BUILD_*.md"
+      - "PROXY*.md"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            cppcheck \
+            libjansson-dev \
+            libssl-dev \
+            ocl-icd-opencl-dev \
+            opencl-headers \
+            pkg-config \
+            shellcheck
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON -DBTCRIG_OPENCL=ON
+
+      - name: Build
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Smoke test
+        run: |
+          ./build/btc_stratum --version
+          ./build/btc_proxy --version
+          ./build/btc_bench --version
+          ./build/btc_stratum --self-test
+          ./build/btc_stratum --cpu-info
+          ./build/btc_bench -t 1 -s 1
+
+      - name: Static checks
+        run: |
+          shellcheck -S warning ubuntu.sh termux.sh
+          cppcheck --enable=warning --error-exitcode=1 \
+            --std=c11 \
+            --inline-suppr \
+            --suppress=missingIncludeSystem \
+            --suppress=preprocessorErrorDirective \
+            -I src src
+
   windows-ucrt64:
     name: Windows UCRT64
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     defaults:
       run:
@@ -30,6 +101,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Read version
         id: version
@@ -38,6 +111,27 @@ jobs:
           $version = (Get-Content VERSION -Raw).Trim()
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Detect release trigger
+        id: release_trigger
+        shell: pwsh
+        run: |
+          $versionChanged = "false"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $versionChanged = "true"
+          } elseif ("${{ github.event_name }}" -eq "push") {
+            $before = "${{ github.event.before }}"
+            $sha = "${{ github.sha }}"
+            if ($before -match "^0+$") {
+              $versionChanged = "true"
+            } else {
+              $changed = git diff --name-only $before $sha
+              if ($changed -contains "VERSION") {
+                $versionChanged = "true"
+              }
+            }
+          }
+          "version_changed=$versionChanged" >> $env:GITHUB_OUTPUT
 
       - name: Setup MSYS2 UCRT64
         uses: msys2/setup-msys2@v2
@@ -105,7 +199,11 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+        if: |
+          (github.event_name == 'workflow_dispatch' && inputs.publish_release) ||
+          (github.event_name == 'push' &&
+            github.ref == 'refs/heads/master' &&
+            steps.release_trigger.outputs.version_changed == 'true')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}

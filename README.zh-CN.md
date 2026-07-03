@@ -25,7 +25,7 @@ BTCRig 将 Windows、Linux、Android/Termux、x86 PC 和 ARM 开发板上的闲�
 ## 主要特性
 
 - 自动选择 x86 SHA-NI、ARMv8 SHA2、OpenSSL 或普通 C 后端。
-- 可选 OpenCL compat10 扫描路径，用于较老 GPU 的实验性测试，运行时默认关闭。
+- 可选 OpenCL GPU 路径，包含 compat10 兜底和 OpenCL 1.2+ modern fixed-npi/register-heavy 候选，运行时默认关闭。
 - CPU/GPU 混合 nonce 调度：GPU worker 保持较大的调度 batch，CPU worker 在混合模式下自动使用较小块，降低新 job 到来后的旧任务滞留。
 - 面向异构闲置设备，让原本未利用的 CPU 算力重新发挥作用。
 - x86 SHA-NI 双路交错扫描，ARMv8 SHA2 专用 range scan。
@@ -192,7 +192,10 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 --opencl-platform N        OpenCL 平台编号
 --opencl-device N          OpenCL 设备编号
 --opencl-batch N           每次 OpenCL 调度扫描的 nonce 数
---opencl-kernel NAME       OpenCL kernel 变体：auto、compact 或 unrolled
+--opencl-local N           OpenCL local work size，0 表示自动
+--opencl-npi N             每个 OpenCL work-item 扫描的 nonce 数
+--opencl-backend NAME      OpenCL 后端：auto、compat10 或 modern
+--opencl-kernel NAME       OpenCL kernel 变体：auto、compact、unrolled、fixed-npi1、fixed-npi2、fixed-npi4 或 register-heavy
 --opencl-self-test         不连接矿池，验证编译后的 OpenCL kernel
 --autotune                 强制重新运行首次 CPU/GPU 调优并更新配置
 --no-autotune              跳过自动首次调优
@@ -236,6 +239,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
     "batch-size": 1048576,
     "local-work-size": 0,
     "nonces-per-work-item": 1,
+    "backend": "auto",
     "kernel": "auto",
     "max-results": 256
   },
@@ -257,11 +261,11 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 
 `diff` 只是初始建议值，实际 share 难度由矿池通过 `mining.set_difficulty` 下发。
 
-OpenCL 是运行时可选模块。构建机器如果有 OpenCL 头文件和库，`btc_stratum` 默认会包含 compat10 OpenCL worker；如果没有，则保持 CPU-only 构建。开启 OpenCL 但找不到可用设备时，程序会输出警告，并继续保留 CPU 路径。启用 OpenCL 且没有配置具体设备列表时，会默认使用全部 OpenCL GPU 设备。
+OpenCL 是运行时可选模块。构建机器如果有 OpenCL 头文件和库，`btc_stratum` 默认会包含 OpenCL worker；如果没有，则保持 CPU-only 构建。开启 OpenCL 但找不到可用设备时，程序会输出警告，并继续保留 CPU 路径。启用 OpenCL 且没有配置具体设备列表时，会默认使用全部 OpenCL GPU 设备。
 
 CPU 和 OpenCL worker 共用一个 nonce 分配器，因此不会扫描重叠 nonce。纯 CPU 模式下 CPU worker 使用较大的 nonce 块；只要存在 OpenCL worker，CPU worker 会自动切换为较小块，而 GPU worker 继续使用配置中的 `batch-size`。新 job、暂停/恢复和停止会直接唤醒等待中的 worker，不再只依赖周期性轮询。
 
-默认配置中 `autotune.enabled=true`、`autotune.cpu-self-test=false` 且 `autotune.gpu-self-test=false`。第一次正常挖矿启动时，程序会先离线运行 self-test 和基准测试，再连接矿池。CPU 和 GPU 的完成标记会分开记录：只运行 CPU 时只会把 `cpu-self-test` 改成 `true`，之后再启用 OpenCL 仍会触发 GPU 调优，并保留已有 CPU 结果。只有当 `config.json` 中 `opencl.enabled=true`，或者命令行传入 `--opencl` / `--opencl-all` 时，自动调优才会测试 GPU 模式；默认 `opencl.enabled=false` 时只测试 CPU，并保持 OpenCL 关闭。如果 OpenCL 已启用，它会先对每张 OpenCL GPU 分阶段测试 `kernel`、`local-work-size`、`nonces-per-work-item` 和 `batch-size`，然后测试 CPU-only、全部 GPU、CPU+全部 GPU、半数 CPU+全部 GPU、每张单独 GPU、CPU+每张单独 GPU；如果机器有超过两张 GPU，还会测试“全部 GPU 去掉其中一张”的组合。测试结束后会把最快模式和每种模式的算力写回 `config.json`。旧版 `autotune.self-test`、`self_test`、`done` 和 `completed` 字段仍会作为 CPU 完成标记兼容读取。
+默认配置中 `autotune.enabled=true`、`autotune.cpu-self-test=false` 且 `autotune.gpu-self-test=false`。第一次正常挖矿启动时，程序会先离线运行 self-test 和基准测试，再连接矿池。CPU 和 GPU 的完成标记会分开记录：只运行 CPU 时只会把 `cpu-self-test` 改成 `true`，之后再启用 OpenCL 仍会触发 GPU 调优，并保留已有 CPU 结果。只有当 `config.json` 中 `opencl.enabled=true`，或者命令行传入 `--opencl` / `--opencl-all` 时，自动调优才会测试 GPU 模式；默认 `opencl.enabled=false` 时只测试 CPU，并保持 OpenCL 关闭。如果 OpenCL 已启用，它会先对每张 OpenCL GPU 分阶段测试 `backend`、`kernel`、`local-work-size`、`nonces-per-work-item` 和 `batch-size`，然后测试 CPU-only、全部 GPU、CPU+全部 GPU、半数 CPU+全部 GPU、每张单独 GPU、CPU+每张单独 GPU；如果机器有超过两张 GPU，还会测试“全部 GPU 去掉其中一张”的组合。测试结束后会把最快模式和每种模式的算力写回 `config.json`。旧版 `autotune.self-test`、`self_test`、`done` 和 `completed` 字段仍会作为 CPU 完成标记兼容读取。
 
 这里故意不穷举所有 CPU/GPU 子集。高价值组合已经能覆盖常见情况：独显加核显、CPU 线程和 GPU 驱动抢资源、某张慢卡或不稳定卡拖累整体。换驱动、改频率、换硬件或调整 OpenCL batch 后，可以用 `--autotune` 重新测试。
 
@@ -273,7 +277,7 @@ CPU 和 OpenCL worker 共用一个 nonce 分配器，因此不会扫描重叠 no
 | `arm-sha2` | 支持 SHA2 扩展的 ARMv8 CPU | ARM 专用 range scan |
 | `openssl` | 所有支持的平台 | 通用库回退路径 |
 | `fast-c` | 所有支持的平台 | 普通 C 回退路径 |
-| `opencl` | 可选 `btc_stratum` worker | 面向老 GPU 测试的实验性 compat10 OpenCL kernel，可由自动调优选择，也可手动启用 |
+| `opencl` | 可选 `btc_stratum` worker | OpenCL GPU worker，包含 `compat10` 兜底和 `modern` OpenCL 1.2+ fixed-npi/register-heavy 候选路径 |
 
 可以用 `BTC_MINER_SHA_BACKEND` 覆盖自动选择，例如：
 
@@ -296,15 +300,15 @@ OpenCL 可以通过 `config.json` 或命令行启用：
   "enabled": true,
   "all-devices": false,
   "devices": [
-    { "platform": 0, "device": 0, "batch-size": 1048576, "local-work-size": 256, "nonces-per-work-item": 1, "kernel": "unrolled" },
-    { "platform": 1, "device": 0, "batch-size": 524288, "local-work-size": 128, "nonces-per-work-item": 2, "kernel": "compact" }
+    { "platform": 0, "device": 0, "backend": "modern", "batch-size": 1048576, "local-work-size": 256, "nonces-per-work-item": 1, "kernel": "fixed-npi1" },
+    { "platform": 1, "device": 0, "backend": "compat10", "batch-size": 524288, "local-work-size": 128, "nonces-per-work-item": 2, "kernel": "compact" }
   ]
 }
 ```
 
 每个 OpenCL 设备都会在开始挖矿前先运行 self-test。某个设备自检失败时会被跳过，其他可用 CPU/GPU worker 会继续运行。
 
-OpenCL compat10 路径避免使用 OpenCL 2.x API，主机端只使用 OpenCL 1.0 API。OpenCL 1.0 设备需要 `cl_khr_global_int32_base_atomics`，OpenCL 1.1+ 设备可以使用核心 global int32 atomic。`kernel=unrolled` 是偏高吞吐的 SHA256d 路径，`kernel=compact` 使用更小的循环压缩器，适合较老驱动或寄存器容量较紧的设备；`kernel=auto` 会优先尝试 unrolled，如果驱动无法编译则回退 compact。它定位是老 GPU 兼容性兜底实验，不是默认高性能路径。
+`backend=compat10` 路径避免使用 OpenCL 2.x API，主机端只使用 OpenCL 1.0 API。OpenCL 1.0 设备需要 `cl_khr_global_int32_base_atomics`，OpenCL 1.1+ 设备可以使用核心 global int32 atomic。`backend=modern` 是 OpenCL 1.2+ 候选路径；`backend=auto` 会在设备同时支持 compat10 和 modern 时交给 autotune 对比选择。`kernel=unrolled` 是偏高吞吐的 SHA256d 路径，`kernel=compact` 使用更小的循环压缩器，适合较老驱动或寄存器容量较紧的设备。`kernel=fixed-npi1`、`fixed-npi2` 和 `fixed-npi4` 是 modern-only kernel，会把每个 work-item 扫描的 nonce 数固定为 1、2 或 4。`kernel=register-heavy` 是 modern-only 的双 nonce 向量寄存器候选，npi 固定为 2。autotune 只会在 `backend=modern` 下测试 modern-only kernel；`kernel=auto` 会测试 compact/unrolled 和 modern 候选变体，然后保留最快且稳定的结果。
 
 ## 文档
 

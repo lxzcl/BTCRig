@@ -18,6 +18,7 @@
     "batch-size": 1048576,
     "local-work-size": 0,
     "nonces-per-work-item": 1,
+    "backend": "auto",
     "kernel": "auto",
     "max-results": 256
   },
