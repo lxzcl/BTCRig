@@ -1306,6 +1306,8 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     int result_count = 0;
     miner_opencl_config_t cpu_only_opencl;
 
+    memset(results, 0, sizeof(results));
+
     int full_threads = config->thread_count > 0 ? config->thread_count : default_thread_count();
     if (full_threads < 0) {
         full_threads = 0;

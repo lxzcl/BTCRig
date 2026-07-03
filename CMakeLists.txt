@@ -121,6 +121,57 @@ elseif(BTCRIG_OPENCL)
     message(STATUS "OpenCL not found: building CPU-only miner")
 endif()
 
+function(btcrig_apply_c_warnings target optimization)
+    target_compile_options(${target} PRIVATE
+        ${optimization}
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
+endfunction()
+
+function(btcrig_apply_generated_include target)
+    target_include_directories(${target} PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    )
+endfunction()
+
+function(btcrig_apply_sha_backend target)
+    target_compile_definitions(${target} PRIVATE
+        OPENSSL_SUPPRESS_DEPRECATED
+    )
+
+    if(BTC_MINER_NATIVE_FLAG)
+        target_compile_options(${target} PRIVATE "${BTC_MINER_NATIVE_FLAG}")
+    endif()
+
+    if(BTC_MINER_ARM_SHA2_ENABLED)
+        target_compile_definitions(${target} PRIVATE BTC_MINER_ARM_SHA2)
+    endif()
+
+    if(HAS_X86_SHA_NI_INTRINSICS)
+        target_compile_definitions(${target} PRIVATE BTC_MINER_X86_SHA_NI)
+    endif()
+endfunction()
+
+function(btcrig_link_opencl target)
+    if(BTCRIG_OPENCL_ENABLED)
+        target_compile_definitions(${target} PRIVATE BTC_MINER_OPENCL)
+        if(TARGET OpenCL::OpenCL)
+            target_link_libraries(${target} PRIVATE OpenCL::OpenCL)
+        else()
+            target_include_directories(${target} PRIVATE ${OpenCL_INCLUDE_DIRS})
+            target_link_libraries(${target} PRIVATE ${OpenCL_LIBRARIES})
+        endif()
+    endif()
+endfunction()
+
+function(btcrig_link_windows_sockets target)
+    if(WIN32)
+        target_link_libraries(${target} PRIVATE ws2_32)
+    endif()
+endfunction()
+
 add_executable(btc_bench
     src/main.c
     src/console.c
@@ -128,32 +179,9 @@ add_executable(btc_bench
     ${BTC_MINER_SHA256D_SOURCES}
 )
 
-target_compile_options(btc_bench PRIVATE
-    -O3
-    -Wall
-    -Wextra
-    -Wpedantic
-)
-
-target_include_directories(btc_bench PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}/generated"
-)
-
-target_compile_definitions(btc_bench PRIVATE
-    OPENSSL_SUPPRESS_DEPRECATED
-)
-
-if(BTC_MINER_NATIVE_FLAG)
-    target_compile_options(btc_bench PRIVATE "${BTC_MINER_NATIVE_FLAG}")
-endif()
-
-if(BTC_MINER_ARM_SHA2_ENABLED)
-    target_compile_definitions(btc_bench PRIVATE BTC_MINER_ARM_SHA2)
-endif()
-
-if(HAS_X86_SHA_NI_INTRINSICS)
-    target_compile_definitions(btc_bench PRIVATE BTC_MINER_X86_SHA_NI)
-endif()
+btcrig_apply_c_warnings(btc_bench -O3)
+btcrig_apply_generated_include(btc_bench)
+btcrig_apply_sha_backend(btc_bench)
 
 target_link_libraries(btc_bench PRIVATE
     OpenSSL::Crypto
@@ -171,42 +199,10 @@ add_executable(btc_stratum
     ${BTCRIG_OPENCL_SOURCES}
 )
 
-target_compile_options(btc_stratum PRIVATE
-    -O3
-    -Wall
-    -Wextra
-    -Wpedantic
-)
-
-target_include_directories(btc_stratum PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}/generated"
-)
-
-if(BTC_MINER_NATIVE_FLAG)
-    target_compile_options(btc_stratum PRIVATE "${BTC_MINER_NATIVE_FLAG}")
-endif()
-
-target_compile_definitions(btc_stratum PRIVATE
-    OPENSSL_SUPPRESS_DEPRECATED
-)
-
-if(BTC_MINER_ARM_SHA2_ENABLED)
-    target_compile_definitions(btc_stratum PRIVATE BTC_MINER_ARM_SHA2)
-endif()
-
-if(HAS_X86_SHA_NI_INTRINSICS)
-    target_compile_definitions(btc_stratum PRIVATE BTC_MINER_X86_SHA_NI)
-endif()
-
-if(BTCRIG_OPENCL_ENABLED)
-    target_compile_definitions(btc_stratum PRIVATE BTC_MINER_OPENCL)
-    if(TARGET OpenCL::OpenCL)
-        target_link_libraries(btc_stratum PRIVATE OpenCL::OpenCL)
-    else()
-        target_include_directories(btc_stratum PRIVATE ${OpenCL_INCLUDE_DIRS})
-        target_link_libraries(btc_stratum PRIVATE ${OpenCL_LIBRARIES})
-    endif()
-endif()
+btcrig_apply_c_warnings(btc_stratum -O3)
+btcrig_apply_generated_include(btc_stratum)
+btcrig_apply_sha_backend(btc_stratum)
+btcrig_link_opencl(btc_stratum)
 
 target_link_libraries(btc_stratum PRIVATE
     OpenSSL::SSL
@@ -215,24 +211,14 @@ target_link_libraries(btc_stratum PRIVATE
     Threads::Threads
 )
 
-if(WIN32)
-    target_link_libraries(btc_stratum PRIVATE ws2_32)
-endif()
+btcrig_link_windows_sockets(btc_stratum)
 
 add_executable(btc_proxy
     src/proxy_main.c
 )
 
-target_compile_options(btc_proxy PRIVATE
-    -O2
-    -Wall
-    -Wextra
-    -Wpedantic
-)
-
-target_include_directories(btc_proxy PRIVATE
-    "${CMAKE_CURRENT_BINARY_DIR}/generated"
-)
+btcrig_apply_c_warnings(btc_proxy -O2)
+btcrig_apply_generated_include(btc_proxy)
 
 target_link_libraries(btc_proxy PRIVATE
     OpenSSL::SSL
@@ -241,6 +227,4 @@ target_link_libraries(btc_proxy PRIVATE
     Threads::Threads
 )
 
-if(WIN32)
-    target_link_libraries(btc_proxy PRIVATE ws2_32)
-endif()
+btcrig_link_windows_sockets(btc_proxy)

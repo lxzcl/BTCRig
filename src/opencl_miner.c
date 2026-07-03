@@ -762,12 +762,12 @@ static int opencl_version_at_least(const char *text, int major, int minor) {
 }
 
 static int extension_list_has(const char *extensions, const char *needle) {
-    size_t needle_len = strlen(needle);
-    const char *p = extensions;
-
-    if (extensions == NULL || needle == NULL || needle_len == 0) {
+    if (extensions == NULL || needle == NULL || needle[0] == '\0') {
         return 0;
     }
+
+    size_t needle_len = strlen(needle);
+    const char *p = extensions;
 
     while ((p = strstr(p, needle)) != NULL) {
         int left_ok = p == extensions || p[-1] == ' ';
