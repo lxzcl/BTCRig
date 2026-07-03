@@ -890,7 +890,7 @@ static double autotune_run_mode(int cpu_threads,
     return (double)(end_hashes - start_hashes) / elapsed;
 }
 
-#if defined(BTC_MINER_OPENCL)
+#if defined(BTC_MINER_OPENCL) || defined(BTC_MINER_CUDA)
 static int value_seen_u32(const uint32_t *values, int count, uint32_t value) {
     for (int i = 0; i < count; ++i) {
         if (values[i] == value) {
@@ -917,7 +917,9 @@ static int autotune_batch_hashrate_is_better(double candidate, double best) {
     }
     return candidate > best * threshold;
 }
+#endif
 
+#if defined(BTC_MINER_OPENCL)
 static void autotune_opencl_device_params(const miner_opencl_config_t *base,
                                           miner_opencl_device_config_t *device,
                                           int device_index,
@@ -1166,6 +1168,208 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
 }
 #endif
 
+#if defined(BTC_MINER_CUDA)
+static uint32_t autotune_cuda_block_value(uint32_t value) {
+    if (value == 0U) {
+        value = MINER_CUDA_DEFAULT_THREADS_PER_BLOCK;
+    }
+    if (value < 32U) {
+        value = 32U;
+    }
+    if (value > 1024U) {
+        value = 1024U;
+    }
+    return (value + 31U) & ~31U;
+}
+
+static uint32_t autotune_cuda_npt_value(uint32_t value) {
+    if (value == 0U) {
+        value = MINER_CUDA_DEFAULT_NONCES_PER_THREAD;
+    }
+    if (value < 1U) {
+        value = 1U;
+    }
+    if (value > 16U) {
+        value = 16U;
+    }
+    return value;
+}
+
+static uint32_t autotune_cuda_batch_value(uint32_t value) {
+    if (value == 0U) {
+        value = MINER_CUDA_DEFAULT_BATCH_SIZE;
+    }
+    return value < 1024U ? 1024U : value;
+}
+
+static void autotune_cuda_params(miner_cuda_config_t *config, double seconds) {
+    if (config == NULL) {
+        return;
+    }
+
+    const uint32_t block_candidates_raw[] = {
+        config->threads_per_block,
+        MINER_CUDA_DEFAULT_THREADS_PER_BLOCK,
+        128U,
+        256U,
+        512U,
+    };
+    const uint32_t npt_candidates_raw[] = {
+        config->nonces_per_thread,
+        MINER_CUDA_DEFAULT_NONCES_PER_THREAD,
+        1U,
+        2U,
+        4U,
+    };
+    const uint32_t batch_candidates_raw[] = {
+        config->batch_size,
+        MINER_CUDA_DEFAULT_BATCH_SIZE,
+        1048576U,
+        2097152U,
+        4194304U,
+        8388608U,
+        16777216U,
+    };
+    uint32_t block_candidates[sizeof(block_candidates_raw) / sizeof(block_candidates_raw[0])];
+    uint32_t npt_candidates[sizeof(npt_candidates_raw) / sizeof(npt_candidates_raw[0])];
+    uint32_t batch_candidates[sizeof(batch_candidates_raw) / sizeof(batch_candidates_raw[0])];
+    int block_count = 0;
+    int npt_count = 0;
+    int batch_count = 0;
+
+    for (size_t i = 0; i < sizeof(block_candidates_raw) / sizeof(block_candidates_raw[0]); ++i) {
+        uint32_t value = autotune_cuda_block_value(block_candidates_raw[i]);
+        if (!value_seen_u32(block_candidates, block_count, value)) {
+            block_candidates[block_count++] = value;
+        }
+    }
+    for (size_t i = 0; i < sizeof(npt_candidates_raw) / sizeof(npt_candidates_raw[0]); ++i) {
+        uint32_t value = autotune_cuda_npt_value(npt_candidates_raw[i]);
+        if (!value_seen_u32(npt_candidates, npt_count, value)) {
+            npt_candidates[npt_count++] = value;
+        }
+    }
+    for (size_t i = 0; i < sizeof(batch_candidates_raw) / sizeof(batch_candidates_raw[0]); ++i) {
+        uint32_t value = autotune_cuda_batch_value(batch_candidates_raw[i]);
+        if (!value_seen_u32(batch_candidates, batch_count, value)) {
+            batch_candidates[batch_count++] = value;
+        }
+    }
+
+    miner_cuda_config_t best_config = *config;
+    best_config.enabled = 1;
+    best_config.batch_size = autotune_cuda_batch_value(best_config.batch_size);
+    best_config.threads_per_block = autotune_cuda_block_value(best_config.threads_per_block);
+    best_config.nonces_per_thread = autotune_cuda_npt_value(best_config.nonces_per_thread);
+    double best_hashrate = 0.0;
+    int best_ok = 0;
+
+    printf("%s[AUTOTUNE]%s warming CUDA device=%d batch=%u block=%u npt=%u\n",
+           C_CYAN,
+           C_RESET,
+           best_config.device,
+           best_config.batch_size,
+           best_config.threads_per_block,
+           best_config.nonces_per_thread);
+    (void)autotune_run_mode(0, NULL, &best_config, seconds, NULL);
+
+    printf("%s[AUTOTUNE]%s tuning CUDA block/npt\n", C_CYAN, C_RESET);
+    for (int bi = 0; bi < block_count; ++bi) {
+        for (int ni = 0; ni < npt_count; ++ni) {
+            miner_cuda_config_t candidate = best_config;
+            int ok = 0;
+
+            candidate.threads_per_block = block_candidates[bi];
+            candidate.nonces_per_thread = npt_candidates[ni];
+
+            printf("%s[AUTOTUNE]%s testing cuda device=%d batch=%u block=%u npt=%u\n",
+                   C_CYAN,
+                   C_RESET,
+                   candidate.device,
+                   candidate.batch_size,
+                   candidate.threads_per_block,
+                   candidate.nonces_per_thread);
+            double hashrate = autotune_run_mode(0, NULL, &candidate, seconds, &ok);
+            if (ok) {
+                printf("%s[AUTOTUNE]%s cuda device=%d batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
+                       C_CYAN,
+                       C_RESET,
+                       candidate.device,
+                       candidate.batch_size,
+                       candidate.threads_per_block,
+                       candidate.nonces_per_thread,
+                       hashrate / 1000000.0);
+            } else {
+                printf("%s[AUTOTUNE]%s cuda device=%d batch=%u block=%u npt=%u unavailable\n",
+                       C_YELLOW,
+                       C_RESET,
+                       candidate.device,
+                       candidate.batch_size,
+                       candidate.threads_per_block,
+                       candidate.nonces_per_thread);
+            }
+            if (ok && (!best_ok || autotune_hashrate_is_better(hashrate, best_hashrate))) {
+                best_ok = 1;
+                best_hashrate = hashrate;
+                best_config = candidate;
+            }
+        }
+    }
+
+    if (!best_ok) {
+        return;
+    }
+
+    printf("%s[AUTOTUNE]%s tuning CUDA batch-size\n", C_CYAN, C_RESET);
+    for (int bi = 0; bi < batch_count; ++bi) {
+        miner_cuda_config_t candidate = best_config;
+        int ok = 0;
+
+        candidate.batch_size = batch_candidates[bi];
+        printf("%s[AUTOTUNE]%s testing cuda device=%d batch=%u block=%u npt=%u\n",
+               C_CYAN,
+               C_RESET,
+               candidate.device,
+               candidate.batch_size,
+               candidate.threads_per_block,
+               candidate.nonces_per_thread);
+        double hashrate = autotune_run_mode(0, NULL, &candidate, seconds, &ok);
+        if (ok) {
+            printf("%s[AUTOTUNE]%s cuda device=%d batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
+                   C_CYAN,
+                   C_RESET,
+                   candidate.device,
+                   candidate.batch_size,
+                   candidate.threads_per_block,
+                   candidate.nonces_per_thread,
+                   hashrate / 1000000.0);
+        } else {
+            printf("%s[AUTOTUNE]%s cuda device=%d batch=%u block=%u npt=%u unavailable\n",
+                   C_YELLOW,
+                   C_RESET,
+                   candidate.device,
+                   candidate.batch_size,
+                   candidate.threads_per_block,
+                   candidate.nonces_per_thread);
+        }
+        if (ok && autotune_batch_hashrate_is_better(hashrate, best_hashrate)) {
+            best_hashrate = hashrate;
+            best_config = candidate;
+        }
+    }
+
+    *config = best_config;
+    printf("%s[AUTOTUNE]%s CUDA final device=%d batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
+           C_BRIGHT_GREEN,
+           C_RESET,
+           config->device,
+           config->batch_size,
+           config->threads_per_block,
+           config->nonces_per_thread,
+           best_hashrate / 1000000.0);
+}
+#endif
+
 static const char *autotune_opencl_mode_name(const miner_opencl_config_t *opencl) {
     if (opencl == NULL || !opencl->enabled) {
         return "off";
@@ -1368,6 +1572,16 @@ static int save_autotune_config(const char *path,
         json_object_set_new(item, "cpu-threads", json_integer(result->cpu_threads));
         json_object_set_new(item, "opencl", json_string(autotune_opencl_mode_name(&result->opencl)));
         json_object_set_new(item, "cuda", json_string(autotune_cuda_mode_name(&result->cuda)));
+        if (result->cuda.enabled) {
+            json_object_set_new(item, "cuda-device", json_integer(result->cuda.device));
+            json_object_set_new(item, "cuda-batch-size", json_integer((json_int_t)result->cuda.batch_size));
+            json_object_set_new(item,
+                                "cuda-threads-per-block",
+                                json_integer((json_int_t)result->cuda.threads_per_block));
+            json_object_set_new(item,
+                                "cuda-nonces-per-thread",
+                                json_integer((json_int_t)result->cuda.nonces_per_thread));
+        }
         if (result->opencl.device_count > 0) {
             json_t *devices = json_array();
             if (devices != NULL) {
@@ -1541,6 +1755,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
         miner_cuda_config_t cuda_config = config->cuda;
         int half_threads = full_threads > 2 ? full_threads / 2 : (full_threads > 1 ? 1 : full_threads);
         cuda_config.enabled = 1;
+        autotune_cuda_params(&cuda_config, seconds);
 
         autotune_append_result(results, &result_count, "cuda", 0, &cpu_only_opencl, &cuda_config, seconds);
         if (full_threads > 0) {
@@ -1679,7 +1894,7 @@ static void usage(const char *argv0) {
     printf("  opencl backend auto: benchmarks compat10 and modern when supported\n");
     printf("  opencl kernel: auto tests compact/unrolled plus modern fixed-npi and register-heavy variants when supported\n");
     printf("  cuda: manual enable uses the NVIDIA driver API and embedded PTX; CUDA Toolkit is not required at runtime\n");
-    printf("  autotune: enabled by default; GPU modes are benchmarked only when OpenCL or CUDA is enabled\n");
+    printf("  autotune: enabled by default; tunes GPU parameters only when OpenCL or CUDA is enabled\n");
     printf("  donate-level: %d%% (%s)\n",
            DONATION_DEFAULT_LEVEL,
            DONATION_DEFAULT_LEVEL == 0 ? "disabled" : "minutes per 100 minutes");
