@@ -17,6 +17,9 @@ typedef struct miner miner_t;
 #define MINER_OPENCL_BACKEND_AUTO 0
 #define MINER_OPENCL_BACKEND_COMPAT10 1
 #define MINER_OPENCL_BACKEND_MODERN 2
+#define MINER_OPENCL_DEFAULT_BATCH_SIZE 1048576U
+#define MINER_OPENCL_DEFAULT_NONCES_PER_WORK_ITEM 1U
+#define MINER_OPENCL_DEFAULT_MAX_RESULTS 256U
 
 typedef struct {
     int platform;
@@ -43,6 +46,24 @@ typedef struct {
     int device_count;
     miner_opencl_device_config_t devices[MINER_OPENCL_MAX_DEVICES];
 } miner_opencl_config_t;
+
+#ifndef BTCRIG_MINER_CUDA_CONFIG_DEFINED
+#define BTCRIG_MINER_CUDA_CONFIG_DEFINED
+#define MINER_CUDA_DEFAULT_DEVICE 0
+#define MINER_CUDA_DEFAULT_BATCH_SIZE 4194304U
+#define MINER_CUDA_DEFAULT_THREADS_PER_BLOCK 256U
+#define MINER_CUDA_DEFAULT_NONCES_PER_THREAD 1U
+#define MINER_CUDA_DEFAULT_MAX_RESULTS 256U
+
+typedef struct {
+    int enabled;
+    int device;
+    uint32_t batch_size;
+    uint32_t threads_per_block;
+    uint32_t nonces_per_thread;
+    uint32_t max_results;
+} miner_cuda_config_t;
+#endif
 
 typedef struct {
     uint64_t seq;
@@ -78,8 +99,12 @@ int miner_build_job(miner_job_t *out,
                     double difficulty);
 
 void miner_opencl_config_defaults(miner_opencl_config_t *config);
+void miner_cuda_config_defaults(miner_cuda_config_t *config);
 miner_t *miner_create(int thread_count);
 miner_t *miner_create_with_options(int thread_count, const miner_opencl_config_t *opencl_config);
+miner_t *miner_create_with_backend_options(int thread_count,
+                                           const miner_opencl_config_t *opencl_config,
+                                           const miner_cuda_config_t *cuda_config);
 void miner_destroy(miner_t *miner);
 int miner_start(miner_t *miner);
 void miner_stop(miner_t *miner);

@@ -8,11 +8,11 @@
 
 ![Release](https://img.shields.io/github/v/release/lxzcl/BTCRig?style=for-the-badge&color=00b894)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20Termux-00b894?style=for-the-badge)
-![SHA256d](https://img.shields.io/badge/SHA256d-CPU%20%7C%20OpenCL-00b894?style=for-the-badge)
+![SHA256d](https://img.shields.io/badge/SHA256d-CPU%20%7C%20OpenCL%20%7C%20CUDA-00b894?style=for-the-badge)
 
 </div>
 
-BTCRig is a small C project for exploring the Bitcoin mining data path without hiding the moving parts. It includes a local SHA256d benchmark, a Stratum V1 mining client, and a TCP/TLS Stratum proxy. It runs on Windows, Linux, Android/Termux, x86 PCs, ARM boards, and optional OpenCL GPUs.
+BTCRig is a small C project for exploring the Bitcoin mining data path without hiding the moving parts. It includes a local SHA256d benchmark, a Stratum V1 mining client, and a TCP/TLS Stratum proxy. It runs on Windows, Linux, Android/Termux, x86 PCs, ARM boards, optional OpenCL GPUs, and optional NVIDIA CUDA GPUs.
 
 This is not an ASIC replacement. Bitcoin mainnet mining is dominated by dedicated hardware; BTCRig is most useful as a benchmark, protocol test client, learning project, proxy, and lightweight tool for comparing CPU/GPU SHA256d paths.
 
@@ -20,7 +20,7 @@ This is not an ASIC replacement. Bitcoin mainnet mining is dominated by dedicate
 
 | Program | Purpose |
 | --- | --- |
-| `btc_stratum` | Stratum V1 client with CPU/OpenCL workers, TCP/TLS, reconnect, and interactive statistics |
+| `btc_stratum` | Stratum V1 client with CPU/OpenCL/CUDA workers, TCP/TLS, reconnect, and interactive statistics |
 | `btc_bench` | Local SHA256d benchmark with selectable backends |
 | `btc_proxy` | Multi-client Stratum proxy with TCP/TLS auto-detection |
 
@@ -30,6 +30,8 @@ These are observed project measurements, not controlled cross-platform benchmark
 
 | Platform | Environment | Backend | Threads | Observed SHA256d |
 | --- | --- | --- | ---: | ---: |
+| NVIDIA GeForce RTX 2050 Laptop GPU | Windows 11 / MSYS2 UCRT64 | CUDA driver API | 1 GPU | ~589 MH/s |
+| NVIDIA GeForce RTX 2050 Laptop GPU | Windows 11 / MSYS2 UCRT64 | OpenCL modern-unrolled | 1 GPU | ~536 MH/s |
 | AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | ~600 MH/s |
 | Snapdragon 8 Elite | Termux | ARMv8 SHA2 | 8 | ~150 MH/s |
 | NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.4 MH/s |
@@ -41,12 +43,15 @@ Run the same local benchmark when comparing builds:
 
 ```bash
 ./build/btc_bench -t "$(nproc)" -s 10
+./build/btc_bench --opencl --opencl-platform 0 --opencl-device 0 -s 10
+./build/btc_bench --cuda --cuda-device 0 -s 10
 ```
 
 ## Highlights
 
 - Automatic backend selection: x86 SHA-NI, ARMv8 SHA2, OpenSSL, or portable C.
 - Optional OpenCL GPU path with compat10 fallback and OpenCL 1.2+ modern fixed-npi/register-heavy candidates; disabled by default at runtime.
+- Optional CUDA GPU path using the NVIDIA driver API and embedded PTX; disabled by default at runtime and does not require the CUDA Toolkit on the target machine.
 - Mixed CPU/GPU nonce scheduler: GPU workers keep large dispatch batches while CPU workers use smaller chunks for faster job turnover.
 - Two-lane interleaved x86 SHA-NI scanning and dedicated ARMv8 SHA2 range scanning.
 - Uses every logical CPU by default; thread count remains configurable.
@@ -61,12 +66,13 @@ Run the same local benchmark when comparing builds:
 | SHA256d backends | `src/sha256d.c`, `src/sha256d_x86_sha_ni.c`, `src/sha256d_arm_sha2.c` |
 | Worker scheduler | `src/miner.c`, `src/miner.h` |
 | OpenCL worker | `src/opencl_miner.c`, `src/opencl_miner.h` |
+| CUDA worker | `src/cuda_miner.c`, `src/cuda_miner.h`, `src/cuda_sha256d_kernel.cu`, `src/cuda_sha256d_ptx.h` |
 | Stratum client | `src/stratum.c`, `src/stratum.h`, `src/stratum_main.c` |
 | Proxy | `src/proxy_main.c` |
 | Benchmark | `src/main.c` |
 | Platform helpers | `src/cpu_info.c`, `src/console.c` |
 
-The project intentionally stays close to C11, CMake, OpenSSL, pthreads, Jansson, and optional OpenCL. The goal is to keep the code easy to inspect and portable across desktop Linux, Windows/MSYS2, and Termux-style environments.
+The project intentionally stays close to C11, CMake, OpenSSL, pthreads, Jansson, optional OpenCL, and the dynamically loaded CUDA driver API. The goal is to keep the code easy to inspect and portable across desktop Linux, Windows/MSYS2, and Termux-style environments.
 
 ## Quick Start
 
@@ -118,7 +124,7 @@ CPU-only build:
 ```bash
 git clone https://github.com/lxzcl/BTCRig.git
 cd BTCRig
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF -DBTCRIG_OPENCL=OFF
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF -DBTCRIG_OPENCL=OFF -DBTCRIG_CUDA=OFF
 cmake --build build -j"$(nproc)"
 ./build/btc_stratum --self-test
 ./build/btc_stratum
@@ -128,13 +134,17 @@ OpenCL-capable build:
 
 ```bash
 sudo apt install -y ocl-icd-opencl-dev opencl-headers clinfo
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF -DBTCRIG_OPENCL=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF -DBTCRIG_OPENCL=ON -DBTCRIG_CUDA=ON
 cmake --build build -j"$(nproc)"
 ./build/btc_stratum --opencl-self-test
+./build/btc_stratum --cuda-self-test
 ./build/btc_stratum --opencl
+./build/btc_stratum --cuda
 ```
 
 OpenCL is still disabled by default in `config.json`. Building with `-DBTCRIG_OPENCL=ON` only includes the GPU worker; enable it explicitly with `opencl.enabled=true`, `--opencl`, or `--opencl-all`.
+
+CUDA is also disabled by default in `config.json`. Building with `-DBTCRIG_CUDA=ON` includes the CUDA worker and `btc_bench --cuda`; runtime only needs an NVIDIA driver that provides `nvcuda.dll` on Windows or `libcuda.so.1` on Linux. The CUDA Toolkit is only needed if you want to regenerate `src/cuda_sha256d_ptx.h` with `tools/generate_cuda_ptx.sh`.
 
 Termux should keep `BTC_MINER_NATIVE=OFF`. The ARM SHA2 source is still compiled with its dedicated crypto flags and selected through runtime feature detection; disabling global native tuning avoids illegal instructions on heterogeneous Android CPU clusters.
 
@@ -159,6 +169,13 @@ Optional OpenCL build support:
 pacman -S --needed \
   mingw-w64-ucrt-x86_64-opencl-headers \
   mingw-w64-ucrt-x86_64-opencl-icd
+```
+
+CUDA support does not need extra MSYS2 packages at runtime. Install the NVIDIA display driver, then verify it with:
+
+```bash
+./build/btc_bench.exe --cuda-info
+./build/btc_bench.exe --cuda-self-test --cuda-device 0
 ```
 
 If `pacman -Syu` asks you to close the terminal, reopen the UCRT64 terminal before continuing. Build and test all three programs:
@@ -220,6 +237,12 @@ Common commands:
 --opencl-backend NAME      OpenCL backend: auto, compat10, or modern
 --opencl-kernel NAME       OpenCL kernel variant: auto, compact, unrolled, fixed-npi1, fixed-npi2, fixed-npi4, or register-heavy
 --opencl-self-test         verify the compiled OpenCL kernel without connecting to a pool
+--cuda                     enable the CUDA worker
+--cuda-device N            CUDA device index
+--cuda-batch N             nonce batch size per CUDA dispatch
+--cuda-block N             CUDA threads per block
+--cuda-npt N               nonces scanned by each CUDA thread
+--cuda-self-test           verify the embedded CUDA PTX without connecting to a pool
 --autotune                 force first-run CPU/GPU benchmark and update config
 --no-autotune              skip automatic first-run benchmark
 --autotune-seconds N       seconds per benchmark mode, default 1.5
@@ -266,6 +289,14 @@ Interactive keys while mining:
     "kernel": "auto",
     "max-results": 256
   },
+  "cuda": {
+    "enabled": false,
+    "device": 0,
+    "batch-size": 4194304,
+    "threads-per-block": 256,
+    "nonces-per-thread": 1,
+    "max-results": 256
+  },
   "pools": [
     {
       "url": "stratum+tls://public-pool.io:14333",
@@ -284,13 +315,13 @@ Interactive keys while mining:
 
 The pool controls the effective share difficulty through `mining.set_difficulty`; `diff` is only an initial suggestion.
 
-OpenCL is opt-in at runtime. If the build machine has OpenCL headers and libraries, `btc_stratum` includes the OpenCL worker by default; otherwise it remains a CPU-only build. Enabling OpenCL without a usable OpenCL device prints a warning and keeps the CPU path available. When OpenCL is enabled and no specific device list is configured, all OpenCL GPU devices are used.
+OpenCL and CUDA are opt-in at runtime. If the build machine has OpenCL headers and libraries, `btc_stratum` includes the OpenCL worker by default; otherwise that path is skipped. CUDA is compiled by default through runtime driver loading and stays inactive unless `cuda.enabled=true` or `--cuda` is used. Enabling either GPU backend without a usable device prints a warning and keeps the CPU path available. When OpenCL is enabled and no specific device list is configured, all OpenCL GPU devices are used; CUDA currently uses one selected NVIDIA device.
 
-CPU and OpenCL workers share one nonce allocator, so ranges do not overlap. In CPU-only mode CPU workers use larger nonce chunks; when any OpenCL worker is active, CPU chunks are reduced while GPU workers keep their configured `batch-size`. New jobs, pause/resume, and shutdown wake waiting workers directly instead of relying on periodic polling.
+CPU, OpenCL, and CUDA workers share one nonce allocator, so ranges do not overlap. In CPU-only mode CPU workers use larger nonce chunks; when any GPU worker is active, CPU chunks are reduced while GPU workers keep their configured `batch-size`. New jobs, pause/resume, and shutdown wake waiting workers directly instead of relying on periodic polling.
 
-With the default `autotune.enabled=true`, `autotune.cpu-self-test=false`, and `autotune.gpu-self-test=false`, the first normal mining run performs an offline self-test and benchmark before connecting to the pool. CPU and GPU completion flags are tracked separately: a CPU-only run only sets `cpu-self-test=true`, so enabling OpenCL later still triggers GPU tuning while preserving the CPU result. GPU modes are benchmarked only when `opencl.enabled=true` in `config.json` or when `--opencl`/`--opencl-all` is passed. If OpenCL is disabled, autotune stays CPU-only and preserves OpenCL as disabled. If OpenCL is enabled, it first tunes each OpenCL GPU with staged `backend`, `kernel`, `local-work-size`, `nonces-per-work-item`, and `batch-size` probes, then measures CPU-only, all-GPU, CPU+all-GPU, half-CPU+all-GPU, each single GPU, CPU+each single GPU, and for systems with more than two GPUs the "all GPUs except one" cases. The fastest mode is written back to `config.json` together with the measured hashrates. Legacy `autotune.self-test`, `self_test`, `done`, and `completed` fields are still accepted as CPU completion flags for older configs.
+With the default `autotune.enabled=true`, `autotune.cpu-self-test=false`, and `autotune.gpu-self-test=false`, the first normal mining run performs an offline self-test and benchmark before connecting to the pool. CPU and GPU completion flags are tracked separately: a CPU-only run only sets `cpu-self-test=true`, so enabling OpenCL or CUDA later still triggers GPU tuning while preserving the CPU result. GPU modes are benchmarked only when `opencl.enabled=true`, `cuda.enabled=true`, or the matching command-line option is passed. If both GPU backends are disabled, autotune stays CPU-only and preserves both as disabled. If OpenCL is enabled, it first tunes each OpenCL GPU with staged `backend`, `kernel`, `local-work-size`, `nonces-per-work-item`, and `batch-size` probes, then measures CPU-only, all-GPU, CPU+all-GPU, half-CPU+all-GPU, each single GPU, CPU+each single GPU, and for systems with more than two GPUs the "all GPUs except one" cases. If CUDA is enabled, it measures CUDA-only, CPU+CUDA, and half-CPU+CUDA. The fastest mode is written back to `config.json` together with the measured hashrates. Legacy `autotune.self-test`, `self_test`, `done`, and `completed` fields are still accepted as CPU completion flags for older configs.
 
-This deliberately avoids trying every possible CPU/GPU subset. The high-value modes catch the common cases: a discrete GPU plus an integrated GPU, CPU contention with the GPU driver, and one slow or unstable GPU dragging down the group. Use `--autotune` to rerun the benchmark after changing drivers, clocks, hardware, or OpenCL batch/local/npi settings.
+This deliberately avoids trying every possible CPU/GPU subset. The high-value modes catch the common cases: a discrete GPU plus an integrated GPU, CPU contention with the GPU driver, and one slow or unstable GPU dragging down the group. Use `--autotune` to rerun the benchmark after changing drivers, clocks, hardware, OpenCL batch/local/npi settings, or CUDA batch/block/npt settings.
 
 ## Backends
 
@@ -301,6 +332,7 @@ This deliberately avoids trying every possible CPU/GPU subset. The high-value mo
 | `openssl` | All supported builds | Library fallback |
 | `fast-c` | All supported builds | Portable C fallback |
 | `opencl` | Optional `btc_stratum` worker | OpenCL GPU worker with `compat10` fallback and `modern` OpenCL 1.2+ fixed-npi/register-heavy candidate selection |
+| `cuda` | Optional `btc_stratum` worker and `btc_bench --cuda` | NVIDIA GPU worker using runtime CUDA driver loading and embedded PTX |
 
 Override automatic selection with `BTC_MINER_SHA_BACKEND`, for example:
 
@@ -316,6 +348,15 @@ OpenCL can be enabled from `config.json` or from the command line:
 ./build/btc_stratum --opencl-self-test --opencl-platform 0 --opencl-device 0
 ```
 
+CUDA can be enabled from `config.json` or from the command line:
+
+```bash
+./build/btc_bench --cuda-info
+./build/btc_bench --cuda --cuda-device 0 -s 10
+./build/btc_stratum --no-cpu --cuda --cuda-device 0
+./build/btc_stratum --cuda-self-test --cuda-device 0
+```
+
 Multiple OpenCL GPUs can be selected explicitly:
 
 ```json
@@ -329,7 +370,7 @@ Multiple OpenCL GPUs can be selected explicitly:
 }
 ```
 
-Each OpenCL device runs a self-test before mining starts. Devices that fail the self-test are skipped while any working CPU or GPU workers continue.
+Each OpenCL device and the selected CUDA device run a self-test before mining starts. Devices that fail the self-test are skipped while any working CPU or GPU workers continue.
 
 `backend=compat10` avoids OpenCL 2.x APIs and uses only OpenCL 1.0 host APIs. OpenCL 1.0 devices need `cl_khr_global_int32_base_atomics`; OpenCL 1.1+ devices can use core global int32 atomics. `backend=modern` is the OpenCL 1.2+ candidate path. `backend=auto` benchmarks compat10 and modern when the device supports both. `kernel=unrolled` is the high-throughput SHA256d path, while `kernel=compact` keeps a smaller loop-based compressor for older drivers or devices with lower register capacity. `kernel=fixed-npi1`, `fixed-npi2`, and `fixed-npi4` are modern-only kernels with the nonce count per work-item fixed at compile selection time. `kernel=register-heavy` is a modern-only two-nonce vector-register candidate with npi fixed to 2. Autotune tests modern-only kernels only with `backend=modern`; `kernel=auto` benchmarks compact/unrolled and the modern candidates, then keeps the fastest stable result.
 
@@ -343,7 +384,7 @@ Each OpenCL device runs a self-test before mining starts. Devices that fail the 
 
 - Mining and benchmarking can keep CPUs and GPUs under sustained load. Watch cooling, power, and battery conditions.
 - Release builds do not hide background services; run the binaries from a terminal and review `config.json`.
-- OpenCL devices run a self-test before mining. Devices that fail are skipped while remaining CPU/GPU workers can continue.
+- OpenCL and CUDA devices run a self-test before mining. Devices that fail are skipped while remaining CPU/GPU workers can continue.
 - GitHub Actions builds packages but intentionally avoids running miner benchmarks on hosted runners.
 
 ## Developers

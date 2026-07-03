@@ -9,6 +9,9 @@
 #if defined(BTC_MINER_OPENCL)
 #include "opencl_miner.h"
 #endif
+#if defined(BTC_MINER_CUDA)
+#include "cuda_miner.h"
+#endif
 
 #include <jansson.h>
 #include <stdint.h>
@@ -64,6 +67,7 @@ typedef struct {
     int cpu_autotune_done;
     int gpu_autotune_done;
     miner_opencl_config_t opencl;
+    miner_cuda_config_t cuda;
     double runtime_seconds;
     double stats_interval;
     double autotune_seconds;
@@ -74,6 +78,7 @@ typedef struct {
     char name[96];
     int cpu_threads;
     miner_opencl_config_t opencl;
+    miner_cuda_config_t cuda;
     double hashrate;
     int ok;
 } autotune_result_t;
@@ -144,6 +149,40 @@ static int run_opencl_self_test(const miner_opencl_config_t *config) {
     (void)config;
     fprintf(stderr,
             "%s[OPENCL]%s self-test unavailable: this build was compiled without OpenCL support\n",
+            C_BRIGHT_RED,
+            C_RESET);
+    return 1;
+#endif
+}
+
+static int run_cuda_self_test(const miner_cuda_config_t *config) {
+#if defined(BTC_MINER_CUDA)
+    cuda_self_test_result_t result;
+    char error[512];
+    error[0] = '\0';
+    if (cuda_miner_self_test(config, &result, error, sizeof(error)) != 0) {
+        fprintf(stderr,
+                "%s[CUDA]%s self-test failed: %s\n",
+                C_BRIGHT_RED,
+                C_RESET,
+                error[0] != '\0' ? error : "unknown error");
+        return 1;
+    }
+    printf("%s[CUDA]%s self-test ok device=%s%s%s compute=sm_%d%d driver=%d nonces=%u\n",
+           C_BRIGHT_GREEN,
+           C_RESET,
+           C_BRIGHT_CYAN,
+           result.device_name,
+           C_RESET,
+           result.compute_major,
+           result.compute_minor,
+           result.driver_version,
+           result.checked_nonces);
+    return 0;
+#else
+    (void)config;
+    fprintf(stderr,
+            "%s[CUDA]%s self-test unavailable: this build was compiled without CUDA support\n",
             C_BRIGHT_RED,
             C_RESET);
     return 1;
@@ -455,6 +494,11 @@ static void app_config_set_defaults(app_config_t *config) {
     config->cpu_autotune_done = 0;
     config->gpu_autotune_done = 0;
     miner_opencl_config_defaults(&config->opencl);
+#if defined(BTC_MINER_CUDA)
+    miner_cuda_config_defaults(&config->cuda);
+#else
+    memset(&config->cuda, 0, sizeof(config->cuda));
+#endif
     config->runtime_seconds = 0.0;
     config->stats_interval = DEFAULT_STATS_INTERVAL;
     config->autotune_seconds = DEFAULT_AUTOTUNE_SECONDS;
@@ -655,6 +699,28 @@ static int load_config_file(app_config_t *config, const char *path, int required
         }
     }
 
+    json_t *cuda = json_object_get(root, "cuda");
+    if (json_is_object(cuda)) {
+        config->cuda.enabled = json_bool_value(json_object_get(cuda, "enabled"), config->cuda.enabled);
+        config->cuda.device = json_int_value(json_object_get(cuda, "device"), config->cuda.device);
+        config->cuda.batch_size = json_u32_value(json_object_get(cuda, "batch-size"), config->cuda.batch_size);
+        config->cuda.batch_size = json_u32_value(json_object_get(cuda, "batch_size"), config->cuda.batch_size);
+        config->cuda.threads_per_block = json_u32_value(json_object_get(cuda, "threads-per-block"),
+                                                        config->cuda.threads_per_block);
+        config->cuda.threads_per_block = json_u32_value(json_object_get(cuda, "threads_per_block"),
+                                                        config->cuda.threads_per_block);
+        config->cuda.threads_per_block = json_u32_value(json_object_get(cuda, "block"),
+                                                        config->cuda.threads_per_block);
+        config->cuda.nonces_per_thread = json_u32_value(json_object_get(cuda, "nonces-per-thread"),
+                                                        config->cuda.nonces_per_thread);
+        config->cuda.nonces_per_thread = json_u32_value(json_object_get(cuda, "nonces_per_thread"),
+                                                        config->cuda.nonces_per_thread);
+        config->cuda.nonces_per_thread = json_u32_value(json_object_get(cuda, "npt"),
+                                                        config->cuda.nonces_per_thread);
+        config->cuda.max_results = json_u32_value(json_object_get(cuda, "max-results"), config->cuda.max_results);
+        config->cuda.max_results = json_u32_value(json_object_get(cuda, "max_results"), config->cuda.max_results);
+    }
+
     config->thread_count = json_int_value(json_object_get(root, "threads"), config->thread_count);
     config->retries = json_int_value(json_object_get(root, "retries"), config->retries);
     config->reconnect_delay = json_int_value(json_object_get(root, "retry-pause"), config->reconnect_delay);
@@ -727,6 +793,18 @@ static void autotune_disable_opencl(miner_opencl_config_t *config) {
     config->enabled = 0;
 }
 
+static void autotune_disable_cuda(miner_cuda_config_t *config) {
+    if (config == NULL) {
+        return;
+    }
+#if defined(BTC_MINER_CUDA)
+    miner_cuda_config_defaults(config);
+#else
+    memset(config, 0, sizeof(*config));
+#endif
+    config->enabled = 0;
+}
+
 #if defined(BTC_MINER_OPENCL)
 static void autotune_all_gpu_config(const miner_opencl_config_t *base, miner_opencl_config_t *out) {
     miner_opencl_config_defaults(out);
@@ -761,6 +839,7 @@ static void autotune_device_list_config(const miner_opencl_config_t *base,
 
 static double autotune_run_mode(int cpu_threads,
                                 const miner_opencl_config_t *opencl,
+                                const miner_cuda_config_t *cuda,
                                 double seconds,
                                 int *ok) {
     if (ok != NULL) {
@@ -770,7 +849,7 @@ static double autotune_run_mode(int cpu_threads,
         seconds = 0.25;
     }
 
-    miner_t *miner = miner_create_with_options(cpu_threads, opencl);
+    miner_t *miner = miner_create_with_backend_options(cpu_threads, opencl, cuda);
     if (miner == NULL) {
         return 0.0;
     }
@@ -779,6 +858,10 @@ static double autotune_run_mode(int cpu_threads,
         return 0.0;
     }
     if (opencl != NULL && opencl->enabled && miner_thread_count(miner) <= cpu_threads) {
+        miner_destroy(miner);
+        return 0.0;
+    }
+    if (cuda != NULL && cuda->enabled && miner_thread_count(miner) <= cpu_threads) {
         miner_destroy(miner);
         return 0.0;
     }
@@ -967,7 +1050,7 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
                    candidate.batch_size,
                    candidate.local_work_size,
                    candidate.nonces_per_work_item);
-            double hashrate = autotune_run_mode(0, &opencl, seconds, &ok);
+            double hashrate = autotune_run_mode(0, &opencl, NULL, seconds, &ok);
             if (ok) {
                 printf("%s[AUTOTUNE]%s gpu%d backend=%s kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
                        C_CYAN,
@@ -1040,7 +1123,7 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
                candidate.batch_size,
                candidate.local_work_size,
                candidate.nonces_per_work_item);
-        double hashrate = autotune_run_mode(0, &opencl, seconds, &ok);
+        double hashrate = autotune_run_mode(0, &opencl, NULL, seconds, &ok);
         if (ok) {
             printf("%s[AUTOTUNE]%s gpu%d backend=%s kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
                    C_CYAN,
@@ -1093,11 +1176,16 @@ static const char *autotune_opencl_mode_name(const miner_opencl_config_t *opencl
     return opencl->all_devices ? "all-gpu" : "single";
 }
 
+static const char *autotune_cuda_mode_name(const miner_cuda_config_t *cuda) {
+    return cuda != NULL && cuda->enabled ? "single" : "off";
+}
+
 static int autotune_append_result(autotune_result_t *results,
                                   int *count,
                                   const char *name,
                                   int cpu_threads,
                                   const miner_opencl_config_t *opencl,
+                                  const miner_cuda_config_t *cuda,
                                   double seconds) {
     if (results == NULL || count == NULL || *count >= AUTOTUNE_MAX_RESULTS) {
         return -1;
@@ -1112,16 +1200,22 @@ static int autotune_append_result(autotune_result_t *results,
     } else {
         autotune_disable_opencl(&result->opencl);
     }
+    if (cuda != NULL) {
+        result->cuda = *cuda;
+    } else {
+        autotune_disable_cuda(&result->cuda);
+    }
 
-    printf("%s[AUTOTUNE]%s testing mode=%s%s%s cpu-threads=%d opencl=%s\n",
+    printf("%s[AUTOTUNE]%s testing mode=%s%s%s cpu-threads=%d opencl=%s cuda=%s\n",
            C_CYAN,
            C_RESET,
            C_BRIGHT_YELLOW,
            result->name,
            C_RESET,
            cpu_threads,
-           autotune_opencl_mode_name(&result->opencl));
-    result->hashrate = autotune_run_mode(cpu_threads, &result->opencl, seconds, &result->ok);
+           autotune_opencl_mode_name(&result->opencl),
+           autotune_cuda_mode_name(&result->cuda));
+    result->hashrate = autotune_run_mode(cpu_threads, &result->opencl, &result->cuda, seconds, &result->ok);
     if (result->ok) {
         printf("%s[AUTOTUNE]%s mode=%s%s%s hashrate=%.3f MH/s\n",
                C_CYAN,
@@ -1186,8 +1280,9 @@ static int save_autotune_config(const char *path,
 
     json_t *cpu = json_object_get_or_create(root, "cpu");
     json_t *opencl = json_object_get_or_create(root, "opencl");
+    json_t *cuda = json_object_get_or_create(root, "cuda");
     json_t *autotune = json_object_get_or_create(root, "autotune");
-    if (cpu == NULL || opencl == NULL || autotune == NULL) {
+    if (cpu == NULL || opencl == NULL || cuda == NULL || autotune == NULL) {
         json_decref(root);
         return -1;
     }
@@ -1234,6 +1329,13 @@ static int save_autotune_config(const char *path,
         json_object_del(opencl, "devices");
     }
 
+    json_object_set_new(cuda, "enabled", config->cuda.enabled ? json_true() : json_false());
+    json_object_set_new(cuda, "device", json_integer(config->cuda.device));
+    json_object_set_new(cuda, "batch-size", json_integer((json_int_t)config->cuda.batch_size));
+    json_object_set_new(cuda, "threads-per-block", json_integer((json_int_t)config->cuda.threads_per_block));
+    json_object_set_new(cuda, "nonces-per-thread", json_integer((json_int_t)config->cuda.nonces_per_thread));
+    json_object_set_new(cuda, "max-results", json_integer((json_int_t)config->cuda.max_results));
+
     json_object_set_new(autotune, "enabled", config->autotune_enabled ? json_true() : json_false());
     json_object_set_new(autotune, "cpu-self-test", config->cpu_autotune_done ? json_true() : json_false());
     json_object_set_new(autotune, "gpu-self-test", config->gpu_autotune_done ? json_true() : json_false());
@@ -1265,6 +1367,7 @@ static int save_autotune_config(const char *path,
         json_object_set_new(item, "hashrate", json_real(result->hashrate));
         json_object_set_new(item, "cpu-threads", json_integer(result->cpu_threads));
         json_object_set_new(item, "opencl", json_string(autotune_opencl_mode_name(&result->opencl)));
+        json_object_set_new(item, "cuda", json_string(autotune_cuda_mode_name(&result->cuda)));
         if (result->opencl.device_count > 0) {
             json_t *devices = json_array();
             if (devices != NULL) {
@@ -1305,6 +1408,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     autotune_result_t results[AUTOTUNE_MAX_RESULTS];
     int result_count = 0;
     miner_opencl_config_t cpu_only_opencl;
+    miner_cuda_config_t cpu_only_cuda;
 
     memset(results, 0, sizeof(results));
 
@@ -1318,16 +1422,19 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     double seconds = config->autotune_seconds > 0.0 ? config->autotune_seconds : DEFAULT_AUTOTUNE_SECONDS;
 
     int tune_opencl = config->opencl.enabled;
+    int tune_cuda = config->cuda.enabled;
 
     printf("%s[AUTOTUNE]%s first-run benchmark seconds=%.1f strategy=%s\n",
            C_CYAN,
            C_RESET,
            seconds,
-           tune_opencl ? (full_threads > 0 ? "cpu,gpu-all,cpu+gpu-all,single-gpu,drop-one" : "gpu-only") : "cpu-only");
+           (tune_opencl || tune_cuda) ?
+               (full_threads > 0 ? "cpu,gpu,cpu+gpu" : "gpu-only") : "cpu-only");
 
     autotune_disable_opencl(&cpu_only_opencl);
+    autotune_disable_cuda(&cpu_only_cuda);
     if (full_threads > 0) {
-        autotune_append_result(results, &result_count, "cpu", full_threads, &cpu_only_opencl, seconds);
+        autotune_append_result(results, &result_count, "cpu", full_threads, &cpu_only_opencl, &cpu_only_cuda, seconds);
     }
 
 #if defined(BTC_MINER_OPENCL)
@@ -1361,11 +1468,17 @@ static int run_autotune(app_config_t *config, const char *config_path) {
 
             autotune_device_list_config(&config->opencl, resolved, resolved_count, &all_gpu_opencl);
 
-            autotune_append_result(results, &result_count, "all-gpu", 0, &all_gpu_opencl, seconds);
+            autotune_append_result(results, &result_count, "all-gpu", 0, &all_gpu_opencl, &cpu_only_cuda, seconds);
             if (full_threads > 0) {
-                autotune_append_result(results, &result_count, "cpu+all-gpu", full_threads, &all_gpu_opencl, seconds);
+                autotune_append_result(results, &result_count, "cpu+all-gpu", full_threads, &all_gpu_opencl, &cpu_only_cuda, seconds);
                 if (half_threads > 0 && half_threads != full_threads) {
-                    autotune_append_result(results, &result_count, "half-cpu+all-gpu", half_threads, &all_gpu_opencl, seconds);
+                    autotune_append_result(results,
+                                           &result_count,
+                                           "half-cpu+all-gpu",
+                                           half_threads,
+                                           &all_gpu_opencl,
+                                           &cpu_only_cuda,
+                                           seconds);
                 }
             }
 
@@ -1374,10 +1487,16 @@ static int run_autotune(app_config_t *config, const char *config_path) {
                 char name[96];
                 autotune_device_list_config(&config->opencl, &resolved[i], 1, &device_opencl);
                 snprintf(name, sizeof(name), "gpu%d", i);
-                autotune_append_result(results, &result_count, name, 0, &device_opencl, seconds);
+                autotune_append_result(results, &result_count, name, 0, &device_opencl, &cpu_only_cuda, seconds);
                 if (full_threads > 0) {
                     snprintf(name, sizeof(name), "cpu+gpu%d", i);
-                    autotune_append_result(results, &result_count, name, full_threads, &device_opencl, seconds);
+                    autotune_append_result(results,
+                                           &result_count,
+                                           name,
+                                           full_threads,
+                                           &device_opencl,
+                                           &cpu_only_cuda,
+                                           seconds);
                 }
             }
 
@@ -1394,10 +1513,16 @@ static int run_autotune(app_config_t *config, const char *config_path) {
                     miner_opencl_config_t subset_opencl;
                     autotune_device_list_config(&config->opencl, subset, subset_count, &subset_opencl);
                     snprintf(name, sizeof(name), "all-gpu-minus-gpu%d", skip);
-                    autotune_append_result(results, &result_count, name, 0, &subset_opencl, seconds);
+                    autotune_append_result(results, &result_count, name, 0, &subset_opencl, &cpu_only_cuda, seconds);
                     if (full_threads > 0) {
                         snprintf(name, sizeof(name), "cpu+all-gpu-minus-gpu%d", skip);
-                        autotune_append_result(results, &result_count, name, full_threads, &subset_opencl, seconds);
+                        autotune_append_result(results,
+                                               &result_count,
+                                               name,
+                                               full_threads,
+                                               &subset_opencl,
+                                               &cpu_only_cuda,
+                                               seconds);
                     }
                 }
             }
@@ -1405,6 +1530,42 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     }
 #else
     printf("%s[AUTOTUNE]%s OpenCL skipped: this build was compiled without OpenCL support\n", C_YELLOW, C_RESET);
+#endif
+
+#if defined(BTC_MINER_CUDA)
+    if (!tune_cuda) {
+        printf("%s[AUTOTUNE]%s CUDA skipped: disabled in config; set cuda.enabled=true or use --cuda to benchmark NVIDIA GPU modes\n",
+               C_YELLOW,
+               C_RESET);
+    } else {
+        miner_cuda_config_t cuda_config = config->cuda;
+        int half_threads = full_threads > 2 ? full_threads / 2 : (full_threads > 1 ? 1 : full_threads);
+        cuda_config.enabled = 1;
+
+        autotune_append_result(results, &result_count, "cuda", 0, &cpu_only_opencl, &cuda_config, seconds);
+        if (full_threads > 0) {
+            autotune_append_result(results,
+                                   &result_count,
+                                   "cpu+cuda",
+                                   full_threads,
+                                   &cpu_only_opencl,
+                                   &cuda_config,
+                                   seconds);
+            if (half_threads > 0 && half_threads != full_threads) {
+                autotune_append_result(results,
+                                       &result_count,
+                                       "half-cpu+cuda",
+                                       half_threads,
+                                       &cpu_only_opencl,
+                                       &cuda_config,
+                                       seconds);
+            }
+        }
+    }
+#else
+    if (tune_cuda) {
+        printf("%s[AUTOTUNE]%s CUDA skipped: this build was compiled without CUDA support\n", C_YELLOW, C_RESET);
+    }
 #endif
 
     const autotune_result_t *best = NULL;
@@ -1417,7 +1578,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
         if (results[i].cpu_threads > 0) {
             cpu_autotune_ok = 1;
         }
-        if (results[i].opencl.enabled) {
+        if (results[i].opencl.enabled || results[i].cuda.enabled) {
             gpu_autotune_ok = 1;
         }
         if (best == NULL || results[i].hashrate > best->hashrate) {
@@ -1432,6 +1593,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     config->cpu_enabled = best->cpu_threads > 0 ? 1 : 0;
     config->thread_count = best->cpu_threads;
     config->opencl = best->opencl;
+    config->cuda = best->cuda;
     if (cpu_autotune_ok) {
         config->cpu_autotune_done = 1;
     }
@@ -1439,7 +1601,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
         config->gpu_autotune_done = 1;
     }
 
-    printf("%s[AUTOTUNE]%s selected mode=%s%s%s hashrate=%.3f MH/s cpu-threads=%d opencl=%s\n",
+    printf("%s[AUTOTUNE]%s selected mode=%s%s%s hashrate=%.3f MH/s cpu-threads=%d opencl=%s cuda=%s\n",
            C_BRIGHT_GREEN,
            C_RESET,
            C_BRIGHT_GREEN,
@@ -1447,7 +1609,8 @@ static int run_autotune(app_config_t *config, const char *config_path) {
            C_RESET,
            best->hashrate / 1000000.0,
            config->thread_count,
-           autotune_opencl_mode_name(&config->opencl));
+           autotune_opencl_mode_name(&config->opencl),
+           autotune_cuda_mode_name(&config->cuda));
 
     if (config->autosave) {
         save_autotune_config(config_path, config, results, result_count, best);
@@ -1470,7 +1633,7 @@ static int app_config_autotune_required(const app_config_t *config) {
     if (config->cpu_enabled && config->thread_count > 0 && !config->cpu_autotune_done) {
         required |= APP_AUTOTUNE_REQUIRED_CPU;
     }
-    if (config->opencl.enabled && !config->gpu_autotune_done) {
+    if ((config->opencl.enabled || config->cuda.enabled) && !config->gpu_autotune_done) {
         required |= APP_AUTOTUNE_REQUIRED_GPU;
     }
     return required;
@@ -1489,6 +1652,7 @@ static void usage(const char *argv0) {
     printf("Usage:\n");
     printf("  %s --self-test\n", argv0);
     printf("  %s --opencl-self-test [--opencl-platform N] [--opencl-device N]\n", argv0);
+    printf("  %s --cuda-self-test [--cuda-device N]\n", argv0);
     printf("  %s --cpu-info\n", argv0);
     printf("  %s --version\n", argv0);
     printf("  %s [-c config.json] [-o stratum+tls://host:port] [-u wallet.worker] [-p password] [-d difficulty]\n", argv0);
@@ -1497,6 +1661,7 @@ static void usage(const char *argv0) {
     printf("     [--no-cpu] [--opencl] [--opencl-all] [--opencl-platform N] [--opencl-device N]\n");
     printf("     [--opencl-batch N] [--opencl-local N] [--opencl-npi N]\n");
     printf("     [--opencl-backend auto|compat10|modern] [--opencl-kernel auto|compact|unrolled|fixed-npi1|fixed-npi2|fixed-npi4|register-heavy]\n");
+    printf("     [--cuda] [--cuda-device N] [--cuda-batch N] [--cuda-block N] [--cuda-npt N]\n");
     printf("     [--autotune] [--no-autotune] [--autotune-seconds N]\n");
     printf("\nDefaults:\n");
     printf("  version: %s\n", BTCRIG_VERSION_TAG);
@@ -1513,7 +1678,8 @@ static void usage(const char *argv0) {
     printf("  opencl compat10: OpenCL 1.0/1.1 compatible, requires global int32 atomics on 1.0 devices\n");
     printf("  opencl backend auto: benchmarks compat10 and modern when supported\n");
     printf("  opencl kernel: auto tests compact/unrolled plus modern fixed-npi and register-heavy variants when supported\n");
-    printf("  autotune: enabled by default; GPU modes are benchmarked only when OpenCL is enabled\n");
+    printf("  cuda: manual enable uses the NVIDIA driver API and embedded PTX; CUDA Toolkit is not required at runtime\n");
+    printf("  autotune: enabled by default; GPU modes are benchmarked only when OpenCL or CUDA is enabled\n");
     printf("  donate-level: %d%% (%s)\n",
            DONATION_DEFAULT_LEVEL,
            DONATION_DEFAULT_LEVEL == 0 ? "disabled" : "minutes per 100 minutes");
@@ -1582,6 +1748,7 @@ int main(int argc, char **argv) {
     int config_required = 0;
     int early_rc = 0;
     int opencl_self_test = 0;
+    int cuda_self_test = 0;
     int worker_override = 0;
     int force_autotune = 0;
 
@@ -1700,6 +1867,24 @@ int main(int argc, char **argv) {
             }
             app_config.opencl.kernel_variant = parsed;
             worker_override = 1;
+        } else if (strcmp(argv[i], "--cuda") == 0) {
+            app_config.cuda.enabled = 1;
+            worker_override = 1;
+        } else if (strcmp(argv[i], "--cuda-self-test") == 0) {
+            cuda_self_test = 1;
+            app_config.cuda.enabled = 1;
+        } else if (strcmp(argv[i], "--cuda-device") == 0 && i + 1 < argc) {
+            app_config.cuda.device = atoi(argv[++i]);
+            worker_override = 1;
+        } else if (strcmp(argv[i], "--cuda-batch") == 0 && i + 1 < argc) {
+            app_config.cuda.batch_size = (uint32_t)strtoul(argv[++i], NULL, 10);
+            worker_override = 1;
+        } else if (strcmp(argv[i], "--cuda-block") == 0 && i + 1 < argc) {
+            app_config.cuda.threads_per_block = (uint32_t)strtoul(argv[++i], NULL, 10);
+            worker_override = 1;
+        } else if (strcmp(argv[i], "--cuda-npt") == 0 && i + 1 < argc) {
+            app_config.cuda.nonces_per_thread = (uint32_t)strtoul(argv[++i], NULL, 10);
+            worker_override = 1;
         } else if (strcmp(argv[i], "--autotune") == 0) {
             app_config.autotune_enabled = 1;
             app_config.cpu_autotune_done = 0;
@@ -1720,6 +1905,9 @@ int main(int argc, char **argv) {
 
     if (opencl_self_test) {
         return run_opencl_self_test(&app_config.opencl);
+    }
+    if (cuda_self_test) {
+        return run_cuda_self_test(&app_config.cuda);
     }
 
     if (app_config.pool_count <= 0) {
@@ -1762,14 +1950,16 @@ int main(int argc, char **argv) {
 
     print_sha_backend_summary();
 
-    int worker_enabled = app_config.cpu_enabled || app_config.opencl.enabled;
+    int worker_enabled = app_config.cpu_enabled || app_config.opencl.enabled || app_config.cuda.enabled;
     int mining_enabled = app_config.enable_mining && worker_enabled;
 
     const char *opencl_mode = !app_config.opencl.enabled ? "off" :
         (app_config.opencl.device_count > 0 ? "devices" :
             (app_config.opencl.all_devices ? "all-gpu" : "single"));
 
-    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mode=%s backend=%s kernel=%s mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
+    const char *cuda_mode = app_config.cuda.enabled ? "single" : "off";
+
+    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mode=%s backend=%s kernel=%s cuda=%s mode=%s batch=%u block=%u npt=%u mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
            C_CYAN,
            C_RESET,
            app_config.pool_count,
@@ -1781,6 +1971,11 @@ int main(int argc, char **argv) {
            opencl_mode,
            opencl_backend_variant_name(app_config.opencl.backend_variant),
            opencl_kernel_variant_name(app_config.opencl.kernel_variant),
+           app_config.cuda.enabled ? "on" : "off",
+           cuda_mode,
+           app_config.cuda.batch_size,
+           app_config.cuda.threads_per_block,
+           app_config.cuda.nonces_per_thread,
            mining_enabled ? "yes" : "no",
            app_config.reconnect_delay,
            MAX_RECONNECT_DELAY,
@@ -1837,6 +2032,7 @@ int main(int argc, char **argv) {
             .thread_count = app_config.thread_count,
             .enable_mining = mining_enabled,
             .opencl = app_config.opencl,
+            .cuda = app_config.cuda,
             .stats_interval = app_config.stats_interval,
             .stop_at = stop_at,
             .session_seconds = phase_seconds,

@@ -15,7 +15,8 @@ sudo apt install -y build-essential cmake make pkg-config git \
 # CMake builds the compat10 GPU backend by default when these are present.
 sudo apt install -y ocl-icd-opencl-dev opencl-headers clinfo
 
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+# CUDA support uses runtime libcuda loading. Install the NVIDIA driver on CUDA hosts.
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON -DBTCRIG_CUDA=ON
 cmake --build build -j"$(nproc)"
 ```
 
@@ -33,7 +34,7 @@ Termux quick build:
 pkg update
 pkg install -y clang make cmake jsoncpp git openssl openssl-tool pkg-config libjansson wget unzip
 
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF -DBTCRIG_OPENCL=OFF
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF -DBTCRIG_OPENCL=OFF -DBTCRIG_CUDA=OFF
 cmake --build build -j"$(nproc)"
 ```
 
@@ -52,6 +53,7 @@ BTC_URL         source zip URL, defaults to the master branch archive
 INSTALL_DIR     install directory, defaults to ~/BTCRig
 BTCRIG_NATIVE   ON/OFF native CPU tuning, Ubuntu default ON, Termux default OFF
 BTCRIG_OPENCL   ON/OFF OpenCL backend, Ubuntu default ON, Termux default OFF
+BTCRIG_CUDA     ON/OFF CUDA driver backend, Ubuntu default ON, Termux default OFF
 BTCRIG_RUN      1 runs btc_stratum after build, 0 only builds
 ```
 
@@ -65,10 +67,11 @@ OpenCL note:
 
 ```text
 OpenCL is optional at build time. If CMake cannot find OpenCL, BTCRig still
-builds normally as a CPU-only miner. On the first normal mining run,
+builds normally as a CPU-only miner. CUDA is loaded dynamically from the NVIDIA
+driver and stays disabled until `cuda.enabled=true` or `--cuda` is used. On the first normal mining run,
 `autotune.enabled=true` makes `btc_stratum` self-test CPU/GPU modes, save the
-fastest mode to config.json, and set `autotune.self-test=true`. Use
-`btc_stratum --opencl-self-test` to verify the compiled kernel without
-connecting to a pool, or `btc_stratum --autotune` to rerun the benchmark after
-changing drivers or hardware.
+fastest mode and CPU/GPU autotune completion flags to config.json. Use
+`btc_stratum --opencl-self-test` or `btc_stratum --cuda-self-test` to verify GPU
+kernels without connecting to a pool, or `btc_stratum --autotune` to rerun the
+benchmark after changing drivers or hardware.
 ```

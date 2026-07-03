@@ -22,6 +22,14 @@
     "kernel": "auto",
     "max-results": 256
   },
+  "cuda": {
+    "enabled": false,
+    "device": 0,
+    "batch-size": 4194304,
+    "threads-per-block": 256,
+    "nonces-per-thread": 1,
+    "max-results": 256
+  },
   "pools": [
     {
       "url": "stratum+tls://public-pool.io:14333",

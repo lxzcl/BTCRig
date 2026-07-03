@@ -5,6 +5,7 @@ BTC_URL="${BTC_URL:-https://github.com/lxzcl/BTCRig/archive/refs/heads/master.zi
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/BTCRig}"
 BTCRIG_NATIVE="${BTCRIG_NATIVE:-ON}"
 BTCRIG_OPENCL="${BTCRIG_OPENCL:-ON}"
+BTCRIG_CUDA="${BTCRIG_CUDA:-ON}"
 BTCRIG_RUN="${BTCRIG_RUN:-1}"
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -89,7 +90,8 @@ rm -rf build
 cmake -S . -B build \
     -DCMAKE_BUILD_TYPE=Release \
     -DBTC_MINER_NATIVE="${BTCRIG_NATIVE}" \
-    -DBTCRIG_OPENCL="${BTCRIG_OPENCL}"
+    -DBTCRIG_OPENCL="${BTCRIG_OPENCL}" \
+    -DBTCRIG_CUDA="${BTCRIG_CUDA}"
 cmake --build build -j"${jobs}"
 
 ./build/btc_stratum --self-test
@@ -98,6 +100,9 @@ if [ "${BTCRIG_OPENCL}" != "OFF" ] && [ "${BTCRIG_OPENCL}" != "off" ] && [ "${BT
     if command -v clinfo >/dev/null 2>&1; then
         ./build/btc_stratum --opencl-self-test || true
     fi
+fi
+if [ "${BTCRIG_CUDA}" != "OFF" ] && [ "${BTCRIG_CUDA}" != "off" ] && [ "${BTCRIG_CUDA}" != "0" ]; then
+    ./build/btc_bench --cuda-info >/dev/null 2>&1 && ./build/btc_stratum --cuda-self-test || true
 fi
 
 echo "Installed to ${INSTALL_DIR}"
