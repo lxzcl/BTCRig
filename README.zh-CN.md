@@ -24,20 +24,24 @@ BTCRig 是一个小型 C 项目，用来直观理解 Bitcoin 挖矿数据路径�
 | `btc_bench` | 可选择 SHA 后端的本机 SHA256d 基准测试工具 |
 | `btc_proxy` | 支持 TCP/TLS 自动识别的多客户端 Stratum 代理 |
 
-## 适合用来做什么
+## 算力参考
 
-- 学习 Stratum subscribe、authorize、notify、difficulty 和 submit 消息如何协同工作。
-- 在同一台机器上用 `btc_bench` 对比不同 SHA256d 后端。
-- 测试 CPU、OpenCL GPU 以及 CPU/GPU 混合 nonce 调度。
-- 在本地或远程客户端前运行一个小型 Stratum 代理。
-- 在完整挖矿软件较难部署的开发板和手机上做实验。
+下面是项目开发过程中记录的实际结果，不是严格控制变量的横向评测。编译器、频率限制、散热和后台负载都会明显影响结果。
 
-## 不适合做什么
+| 平台 | 环境 | 后端 | 线程 | 记录算力 |
+| --- | --- | --- | ---: | ---: |
+| AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | 约 600 MH/s |
+| 骁龙 8 Elite | Termux | ARMv8 SHA2 | 8 | 约 150 MH/s |
+| NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.4 MH/s |
+| NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.3 MH/s |
+| RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | 约8 MH/s |
+| Allwinner H3 Series | Linux Cortex-A7 | Openssl | 4 | 约1.2 MH/s |
 
-- 不要期望通用 CPU 或 GPU 能带来可观的 Bitcoin 挖矿收益。
-- 不要使用 `config.json` 里的示例钱包；真实运行前请先替换成自己的地址。
-- 不要在未获许可的共享系统上运行基准测试或挖矿负载。
-- 不要把 release 二进制包当成跳过配置审查的理由。
+比较不同构建时，应在同一台机器上运行相同命令：
+
+```bash
+./build/btc_bench -t "$(nproc)" -s 10
+```
 
 ## 主要特性
 
@@ -183,25 +187,6 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 ```
 
 在其他 Windows 电脑上运行时，应复制整个 `dist/` 目录。
-
-## 算力参考
-
-下面是项目开发过程中记录的实际结果，不是严格控制变量的横向评测。编译器、频率限制、散热和后台负载都会明显影响结果。
-
-| 平台 | 环境 | 后端 | 线程 | 记录算力 |
-| --- | --- | --- | ---: | ---: |
-| AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | 约 600 MH/s |
-| 骁龙 8 Elite | Termux | ARMv8 SHA2 | 8 | 约 150 MH/s |
-| NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.4 MH/s |
-| NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.3 MH/s |
-| RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | 约8 MH/s |
-| Allwinner H3 Series | Linux Cortex-A7 | Openssl | 4 | 约1.2 MH/s |
-
-比较不同构建时，应在同一台机器上运行相同命令：
-
-```bash
-./build/btc_bench -t "$(nproc)" -s 10
-```
 
 ## 运行与控制
 

@@ -24,20 +24,24 @@ This is not an ASIC replacement. Bitcoin mainnet mining is dominated by dedicate
 | `btc_bench` | Local SHA256d benchmark with selectable backends |
 | `btc_proxy` | Multi-client Stratum proxy with TCP/TLS auto-detection |
 
-## When To Use It
+## Performance Snapshots
 
-- Learn how Stratum subscribe, authorize, notify, difficulty, and submit messages fit together.
-- Compare SHA256d backends on the same machine with `btc_bench`.
-- Test CPU, OpenCL GPU, and mixed CPU/GPU nonce scheduling.
-- Run a small Stratum proxy in front of local or remote clients.
-- Experiment on boards and phones where full mining stacks are awkward to deploy.
+These are observed project measurements, not controlled cross-platform benchmarks. Compiler versions, clock limits, cooling, and background load can materially change the result.
 
-## When Not To Use It
+| Platform | Environment | Backend | Threads | Observed SHA256d |
+| --- | --- | --- | ---: | ---: |
+| AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | ~600 MH/s |
+| Snapdragon 8 Elite | Termux | ARMv8 SHA2 | 8 | ~150 MH/s |
+| NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.4 MH/s |
+| NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.3 MH/s |
+| RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | ~8 MH/s |
+| Allwinner H3 Series | Linux Cortex-A7 | Openssl | 4 | ~1.2 MH/s |
 
-- Do not expect profitable Bitcoin mining on general-purpose CPUs or GPUs.
-- Do not use the example wallet in `config.json`; replace it before any real mining run.
-- Do not run benchmark or mining workloads on shared systems without permission.
-- Do not treat release binaries as a substitute for reviewing the configuration you run.
+Run the same local benchmark when comparing builds:
+
+```bash
+./build/btc_bench -t "$(nproc)" -s 10
+```
 
 ## Highlights
 
@@ -183,25 +187,6 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 ```
 
 Copy the complete `dist/` directory when running BTCRig on another Windows machine.
-
-## Performance Snapshots
-
-These are observed project measurements, not controlled cross-platform benchmarks. Compiler versions, clock limits, cooling, and background load can materially change the result.
-
-| Platform | Environment | Backend | Threads | Observed SHA256d |
-| --- | --- | --- | ---: | ---: |
-| AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | ~600 MH/s |
-| Snapdragon 8 Elite | Termux | ARMv8 SHA2 | 8 | ~150 MH/s |
-| NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.4 MH/s |
-| NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.3 MH/s |
-| RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | ~8 MH/s |
-| Allwinner H3 Series | Linux Cortex-A7 | Openssl | 4 | ~1.2 MH/s |
-
-Run the same local benchmark when comparing builds:
-
-```bash
-./build/btc_bench -t "$(nproc)" -s 10
-```
 
 ## Runtime
 
