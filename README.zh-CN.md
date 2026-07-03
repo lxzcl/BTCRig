@@ -2,7 +2,7 @@
 
 # BTCRig
 
-**轻量的 Bitcoin SHA256d CPU 矿工、基准测试与 Stratum 代理。**
+**轻量的 SHA256d 基准测试、Stratum V1 客户端与挖矿代理，适合学习、测试和异构算力实验。**
 
 [English](README.md) · [下载版本](https://github.com/lxzcl/BTCRig/releases)
 
@@ -12,27 +12,57 @@
 
 </div>
 
-BTCRig 将 Windows、Linux、Android/Termux、x86 PC 和 ARM 开发板上的闲置 CPU 资源转化为算力。
+BTCRig 是一个小型 C 项目，用来直观理解 Bitcoin 挖矿数据路径，而不是把关键细节藏起来。它包含本地 SHA256d 基准测试、Stratum V1 挖矿客户端和 TCP/TLS Stratum 代理，可运行在 Windows、Linux、Android/Termux、x86 PC、ARM 开发板以及可选的 OpenCL GPU 上。
+
+这不是 ASIC 替代品。Bitcoin 主网挖矿已经由专用硬件主导；BTCRig 更适合作为基准测试、协议测试客户端、学习项目、代理工具，以及比较 CPU/GPU SHA256d 路径的轻量实验平台。
 
 ## 程序组成
 
 | 程序 | 用途 |
 | --- | --- |
-| `btc_stratum` | 支持 Stratum V1、TCP/TLS、断线重连和交互统计的 CPU 矿工 |
+| `btc_stratum` | 支持 CPU/OpenCL worker、Stratum V1、TCP/TLS、断线重连和交互统计的客户端 |
 | `btc_bench` | 可选择 SHA 后端的本机 SHA256d 基准测试工具 |
 | `btc_proxy` | 支持 TCP/TLS 自动识别的多客户端 Stratum 代理 |
+
+## 适合用来做什么
+
+- 学习 Stratum subscribe、authorize、notify、difficulty 和 submit 消息如何协同工作。
+- 在同一台机器上用 `btc_bench` 对比不同 SHA256d 后端。
+- 测试 CPU、OpenCL GPU 以及 CPU/GPU 混合 nonce 调度。
+- 在本地或远程客户端前运行一个小型 Stratum 代理。
+- 在完整挖矿软件较难部署的开发板和手机上做实验。
+
+## 不适合做什么
+
+- 不要期望通用 CPU 或 GPU 能带来可观的 Bitcoin 挖矿收益。
+- 不要使用 `config.json` 里的示例钱包；真实运行前请先替换成自己的地址。
+- 不要在未获许可的共享系统上运行基准测试或挖矿负载。
+- 不要把 release 二进制包当成跳过配置审查的理由。
 
 ## 主要特性
 
 - 自动选择 x86 SHA-NI、ARMv8 SHA2、OpenSSL 或普通 C 后端。
 - 可选 OpenCL GPU 路径，包含 compat10 兜底和 OpenCL 1.2+ modern fixed-npi/register-heavy 候选，运行时默认关闭。
 - CPU/GPU 混合 nonce 调度：GPU worker 保持较大的调度 batch，CPU worker 在混合模式下自动使用较小块，降低新 job 到来后的旧任务滞留。
-- 面向异构闲置设备，让原本未利用的 CPU 算力重新发挥作用。
 - x86 SHA-NI 双路交错扫描，ARMv8 SHA2 专用 range scan。
 - 默认使用全部逻辑 CPU，也可以手动指定线程数。
 - 网络断开后持续重连，等待时间最高限制为 60 秒。
 - 支持普通 TCP、证书验证 TLS 和兼容模式 TLS。
 - 算力单位自动显示，并支持查看每个线程的实时算力。
+
+## 架构概览
+
+| 模块 | 文件 |
+| --- | --- |
+| SHA256d 后端 | `src/sha256d.c`、`src/sha256d_x86_sha_ni.c`、`src/sha256d_arm_sha2.c` |
+| Worker 调度 | `src/miner.c`、`src/miner.h` |
+| OpenCL worker | `src/opencl_miner.c`、`src/opencl_miner.h` |
+| Stratum 客户端 | `src/stratum.c`、`src/stratum.h`、`src/stratum_main.c` |
+| 代理 | `src/proxy_main.c` |
+| 基准测试 | `src/main.c` |
+| 平台辅助 | `src/cpu_info.c`、`src/console.c` |
+
+项目刻意保持在 C11、CMake、OpenSSL、pthreads、Jansson 和可选 OpenCL 这些基础组件上。目标是让代码容易审查，并能在桌面 Linux、Windows/MSYS2 和 Termux 这类环境中保持可移植。
 
 ## 快速开始
 
@@ -192,7 +222,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 -t, --threads N            CPU 线程数，0 表示自动
 --stats N                  每 N 秒输出统计
 --runtime N                运行 N 秒，0 表示不限时
---donate-level N           捐助比例，默认 0
+--donate-level N           捐助比例，编译默认 1，最低 1
 --no-mine                  只测试连接，不启动挖矿
 --no-cpu                   关闭 CPU worker
 --opencl                   启用 OpenCL worker，默认使用全部 GPU 设备
@@ -324,9 +354,24 @@ OpenCL 可以通过 `config.json` 或命令行启用：
 - [English README](README.md)
 - [版本下载](https://github.com/lxzcl/BTCRig/releases)
 
-## 捐赠
-软件默认包含 1% 开发者捐赠（约每 100 分钟捐赠 1 分钟），对所有挖矿模式生效。目前无法在代码层面中自动区分 PPLNS 矿池与 Solo 模式，矿池地址默认使用PPLNS，若使用 Solo 模式，请注意：存在极小概率在捐赠时段内找到区块，导致整个区块奖励被捐赠。如需修改捐赠比例，请编辑源码中的捐赠参数并重新编译。
-BTC：bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
+## 负责任使用
+
+- 挖矿和基准测试会让 CPU/GPU 长时间处于高负载，请注意散热、供电和电池状态。
+- Release 构建不会隐藏后台服务；请从终端运行二进制，并先检查 `config.json`。
+- OpenCL 设备会在开始挖矿前运行 self-test；失败的设备会被跳过，其他 CPU/GPU worker 可以继续运行。
+- GitHub Actions 只构建发布包，刻意不在托管 runner 上运行挖矿基准测试。
+
+## 开发者捐赠
+
+BTCRig 默认包含 1% 开发者捐赠，约等于每 100 分钟有效挖矿中捐赠 1 分钟。该设置对所有挖矿模式生效。
+
+使用 Solo 模式时，存在极小概率在捐赠时间段内找到区块，导致整个区块奖励被捐赠。当前源码中的编译最低捐赠比例为 1%；如需修改捐赠策略，请调整源码中的捐赠常量并重新编译。
+
+捐赠地址：
+
+```text
+bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
+```
 
 ## 许可证
 

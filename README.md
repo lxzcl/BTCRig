@@ -2,7 +2,7 @@
 
 # BTCRig
 
-**A compact Bitcoin SHA256d CPU miner, benchmark, and Stratum proxy.**
+**A compact SHA256d benchmark, Stratum V1 client, and mining proxy for learning, testing, and heterogeneous compute experiments.**
 
 [简体中文](README.zh-CN.md) · [Releases](https://github.com/lxzcl/BTCRig/releases)
 
@@ -12,27 +12,57 @@
 
 </div>
 
-BTCRig turns idle CPU resources on Windows, Linux, Android/Termux, x86 PCs, and ARM boards into usable compute power.
+BTCRig is a small C project for exploring the Bitcoin mining data path without hiding the moving parts. It includes a local SHA256d benchmark, a Stratum V1 mining client, and a TCP/TLS Stratum proxy. It runs on Windows, Linux, Android/Termux, x86 PCs, ARM boards, and optional OpenCL GPUs.
+
+This is not an ASIC replacement. Bitcoin mainnet mining is dominated by dedicated hardware; BTCRig is most useful as a benchmark, protocol test client, learning project, proxy, and lightweight tool for comparing CPU/GPU SHA256d paths.
 
 ## Programs
 
 | Program | Purpose |
 | --- | --- |
-| `btc_stratum` | CPU miner with Stratum V1, TCP/TLS, reconnect, and interactive statistics |
+| `btc_stratum` | Stratum V1 client with CPU/OpenCL workers, TCP/TLS, reconnect, and interactive statistics |
 | `btc_bench` | Local SHA256d benchmark with selectable backends |
 | `btc_proxy` | Multi-client Stratum proxy with TCP/TLS auto-detection |
+
+## When To Use It
+
+- Learn how Stratum subscribe, authorize, notify, difficulty, and submit messages fit together.
+- Compare SHA256d backends on the same machine with `btc_bench`.
+- Test CPU, OpenCL GPU, and mixed CPU/GPU nonce scheduling.
+- Run a small Stratum proxy in front of local or remote clients.
+- Experiment on boards and phones where full mining stacks are awkward to deploy.
+
+## When Not To Use It
+
+- Do not expect profitable Bitcoin mining on general-purpose CPUs or GPUs.
+- Do not use the example wallet in `config.json`; replace it before any real mining run.
+- Do not run benchmark or mining workloads on shared systems without permission.
+- Do not treat release binaries as a substitute for reviewing the configuration you run.
 
 ## Highlights
 
 - Automatic backend selection: x86 SHA-NI, ARMv8 SHA2, OpenSSL, or portable C.
 - Optional OpenCL GPU path with compat10 fallback and OpenCL 1.2+ modern fixed-npi/register-heavy candidates; disabled by default at runtime.
 - Mixed CPU/GPU nonce scheduler: GPU workers keep large dispatch batches while CPU workers use smaller chunks for faster job turnover.
-- Built for reusing heterogeneous idle devices instead of leaving their CPU capacity unused.
 - Two-lane interleaved x86 SHA-NI scanning and dedicated ARMv8 SHA2 range scanning.
 - Uses every logical CPU by default; thread count remains configurable.
 - Continuous network reconnect with bounded backoff.
 - Plain TCP and verified or compatible TLS pool connections.
 - Human-readable hashrate units and per-thread runtime statistics.
+
+## Architecture
+
+| Area | Files |
+| --- | --- |
+| SHA256d backends | `src/sha256d.c`, `src/sha256d_x86_sha_ni.c`, `src/sha256d_arm_sha2.c` |
+| Worker scheduler | `src/miner.c`, `src/miner.h` |
+| OpenCL worker | `src/opencl_miner.c`, `src/opencl_miner.h` |
+| Stratum client | `src/stratum.c`, `src/stratum.h`, `src/stratum_main.c` |
+| Proxy | `src/proxy_main.c` |
+| Benchmark | `src/main.c` |
+| Platform helpers | `src/cpu_info.c`, `src/console.c` |
+
+The project intentionally stays close to C11, CMake, OpenSSL, pthreads, Jansson, and optional OpenCL. The goal is to keep the code easy to inspect and portable across desktop Linux, Windows/MSYS2, and Termux-style environments.
 
 ## Quick Start
 
@@ -192,7 +222,7 @@ Common commands:
 -t, --threads N            CPU thread count, 0 means auto
 --stats N                  statistics interval in seconds
 --runtime N                runtime limit, 0 means unlimited
---donate-level N           donation percentage, default 0
+--donate-level N           donation percentage, compiled default 1, minimum 1
 --no-mine                  test the connection without mining
 --no-cpu                   disable CPU workers
 --opencl                   enable OpenCL workers on all GPU devices by default
@@ -324,9 +354,24 @@ Each OpenCL device runs a self-test before mining starts. Devices that fail the 
 - [Chinese README](README.zh-CN.md)
 - [Release downloads](https://github.com/lxzcl/BTCRig/releases)
 
-## Developers
-The software includes a 1% developer donation by default (approximately 1 minute donated out of every 100), which applies to all mining modes. Currently, there is no way to automatically distinguish between PPLNS pool mining and solo mode in code. Pool addresses use PPLNS by default. If you are using solo mode, please note: there is an extremely small chance that a block is found during a donation interval, resulting in the entire block reward being donated. To modify the donation percentage, edit the donation parameter in the source code and recompile.
-BTC:bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
+## Responsible Use
+
+- Mining and benchmarking can keep CPUs and GPUs under sustained load. Watch cooling, power, and battery conditions.
+- Release builds do not hide background services; run the binaries from a terminal and review `config.json`.
+- OpenCL devices run a self-test before mining. Devices that fail are skipped while remaining CPU/GPU workers can continue.
+- GitHub Actions builds packages but intentionally avoids running miner benchmarks on hosted runners.
+
+## Developer Donation
+
+BTCRig includes a 1% developer donation by default, approximately 1 minute out of every 100 minutes of active mining. It applies to all mining modes.
+
+When using solo mode, there is a very small chance that a block is found during the donation interval, which would donate the full block reward. The current source enforces a compiled minimum donation level of 1%; edit the donation constants and rebuild if you need a different donation policy.
+
+Donation address:
+
+```text
+bc1qqz0wutk9kk5mmaf7fu4dm5w4fq4fhaah9hpzr3
+```
 
 ## License
 
