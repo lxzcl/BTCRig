@@ -50,7 +50,7 @@ BTCRig 是一个跨平台 C 项目，提供 SHA256d 基准、Stratum V1 挖矿�
 
 - 自动选择 x86 SHA-NI、ARMv8 SHA2、OpenSSL 或普通 C 后端。
 - 可选 OpenCL GPU 路径，包含 compat10 兜底和 OpenCL 1.2+ modern fixed-npi/register-heavy 候选，运行时默认关闭。
-- 可选 CUDA GPU 路径，使用 NVIDIA Driver API 和内嵌 PTX，包含 standard 和 dual nonce kernel 变体；运行时默认关闭，目标机器不需要安装 CUDA Toolkit。
+- 可选 CUDA GPU 路径，使用 NVIDIA Driver API 和内嵌 PTX，包含 standard、dual nonce 和 fixed-npt kernel 变体；运行时默认关闭，目标机器不需要安装 CUDA Toolkit。
 - CPU/GPU 混合 nonce 调度：GPU worker 保持较大的调度 batch，CPU worker 在混合模式下自动使用较小块，降低新 job 到来后的旧任务滞留。
 - x86 SHA-NI 双路交错扫描，ARMv8 SHA2 专用 range scan。
 - 默认使用全部逻辑 CPU，也可以手动指定线程数。
@@ -242,7 +242,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 --cuda-batch N             每次 CUDA 调度扫描的 nonce 数
 --cuda-block N             CUDA threads per block
 --cuda-npt N               每个 CUDA thread 扫描的 nonce 数
---cuda-kernel NAME         CUDA kernel 变体：standard 或 dual
+--cuda-kernel NAME         CUDA kernel 变体：standard、dual、fixed-npt1、fixed-npt2 或 fixed-npt4
 --cuda-self-test           不连接矿池，验证内嵌 CUDA PTX
 --autotune                 强制重新运行首次 CPU/GPU 调优并更新配置
 --no-autotune              跳过自动首次调优
@@ -356,12 +356,13 @@ CUDA 可以通过 `config.json` 或命令行启用：
 ./build/btc_bench --cuda-info
 ./build/btc_bench --cuda-autotune --cuda-device 0 -s 2
 ./build/btc_bench --cuda --cuda-device 0 -s 10
+./build/btc_bench --cuda --cuda-device 0 --cuda-kernel fixed-npt1 -s 10
 ./build/btc_bench --cuda --cuda-device 0 --cuda-kernel dual --cuda-npt 2 -s 10
 ./build/btc_stratum --no-cpu --cuda --cuda-device 0
 ./build/btc_stratum --cuda-self-test --cuda-device 0
 ```
 
-`cuda.kernel` 支持 `standard` 或 `dual`。默认使用 `standard`；`--cuda-autotune` 会测试两个变体，并为当前 GPU 保留最快的稳定结果。
+`cuda.kernel` 支持 `standard`、`dual`、`fixed-npt1`、`fixed-npt2` 或 `fixed-npt4`。默认使用 `standard`；`--cuda-autotune` 会测试可用变体，并为当前 GPU 保留最快的稳定结果。fixed-npt kernel 会在运行时强制使用对应的 `nonces-per-thread` 值。
 
 也可以显式指定多张 OpenCL GPU：
 

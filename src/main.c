@@ -296,6 +296,15 @@ static int parse_cuda_kernel_variant(const char *value, int fallback) {
     if (strcmp(value, "dual") == 0 || strcmp(value, "dual-nonce") == 0 || strcmp(value, "dual_nonce") == 0) {
         return MINER_CUDA_KERNEL_DUAL;
     }
+    if (strcmp(value, "fixed-npt1") == 0 || strcmp(value, "fixed_npt1") == 0) {
+        return MINER_CUDA_KERNEL_FIXED_NPT1;
+    }
+    if (strcmp(value, "fixed-npt2") == 0 || strcmp(value, "fixed_npt2") == 0) {
+        return MINER_CUDA_KERNEL_FIXED_NPT2;
+    }
+    if (strcmp(value, "fixed-npt4") == 0 || strcmp(value, "fixed_npt4") == 0) {
+        return MINER_CUDA_KERNEL_FIXED_NPT4;
+    }
     return fallback;
 }
 #endif
@@ -320,7 +329,8 @@ static void usage(const char *argv0) {
             "       [--opencl-backend auto|compat10|modern] [--opencl-kernel auto|compact|unrolled|fixed-npi1|fixed-npi2|fixed-npi4|register-heavy]\n"
             "       [--all] [--cpu-info] [--cuda-info] [--cuda] [--cuda-autotune] [--cuda-self-test]\n"
             "       [--cuda-device N] [--cuda-batch N] [--cuda-block N] [--cuda-npt N]\n"
-            "       [--cuda-kernel standard|dual] [--version]\n",
+            "       [--cuda-kernel standard|dual|fixed-npt1|fixed-npt2|fixed-npt4]\n"
+            "       [--version]\n",
             argv0);
 }
 
@@ -661,6 +671,19 @@ static uint32_t cuda_autotune_batch_value(uint32_t value) {
     return value < 1024U ? 1024U : value;
 }
 
+static uint32_t cuda_autotune_kernel_forced_npt(int variant) {
+    switch (variant) {
+    case MINER_CUDA_KERNEL_FIXED_NPT1:
+        return 1U;
+    case MINER_CUDA_KERNEL_FIXED_NPT2:
+        return 2U;
+    case MINER_CUDA_KERNEL_FIXED_NPT4:
+        return 4U;
+    default:
+        return 0U;
+    }
+}
+
 static int cuda_autotune_hashrate_is_better(double candidate, double best) {
     const double threshold = 1.02;
 
@@ -712,6 +735,14 @@ static int run_cuda_autotune(int seconds, const miner_cuda_config_t *config) {
     base.batch_size = cuda_autotune_batch_value(base.batch_size);
     base.threads_per_block = cuda_autotune_block_value(base.threads_per_block);
     base.nonces_per_thread = cuda_autotune_npt_value(base.nonces_per_thread);
+    if (base.kernel_variant < MINER_CUDA_KERNEL_STANDARD ||
+        base.kernel_variant > MINER_CUDA_KERNEL_LAST) {
+        base.kernel_variant = MINER_CUDA_DEFAULT_KERNEL_VARIANT;
+    }
+    uint32_t forced_npt = cuda_autotune_kernel_forced_npt(base.kernel_variant);
+    if (forced_npt != 0U) {
+        base.nonces_per_thread = forced_npt;
+    }
 
     error[0] = '\0';
     if (cuda_miner_self_test(&base, NULL, error, sizeof(error)) != 0) {
@@ -749,6 +780,9 @@ static int run_cuda_autotune(int seconds, const miner_cuda_config_t *config) {
         (uint32_t)base.kernel_variant,
         MINER_CUDA_KERNEL_STANDARD,
         MINER_CUDA_KERNEL_DUAL,
+        MINER_CUDA_KERNEL_FIXED_NPT1,
+        MINER_CUDA_KERNEL_FIXED_NPT2,
+        MINER_CUDA_KERNEL_FIXED_NPT4,
     };
     const uint32_t npt_candidates_raw[] = {
         base.nonces_per_thread,
@@ -795,7 +829,7 @@ static int run_cuda_autotune(int seconds, const miner_cuda_config_t *config) {
     }
     for (size_t i = 0; i < sizeof(kernel_candidates_raw) / sizeof(kernel_candidates_raw[0]); ++i) {
         uint32_t value = kernel_candidates_raw[i];
-        if (value > MINER_CUDA_KERNEL_DUAL) {
+        if (value > MINER_CUDA_KERNEL_LAST) {
             continue;
         }
         if (!value_seen_u32(kernel_candidates, kernel_count, value)) {
@@ -814,8 +848,12 @@ static int run_cuda_autotune(int seconds, const miner_cuda_config_t *config) {
                 cuda_bench_result_t result;
 
                 candidate.kernel_variant = (int)kernel_candidates[ki];
+                uint32_t forced_npt = cuda_autotune_kernel_forced_npt(candidate.kernel_variant);
+                if (forced_npt != 0U && npt_candidates[ni] != forced_npt) {
+                    continue;
+                }
                 candidate.threads_per_block = block_candidates[bi];
-                candidate.nonces_per_thread = npt_candidates[ni];
+                candidate.nonces_per_thread = forced_npt != 0U ? forced_npt : npt_candidates[ni];
                 printf("%s[AUTOTUNE]%s testing device=%d kernel=%s batch=%u block=%u npt=%u\n",
                        C_CYAN,
                        C_RESET,
@@ -1032,7 +1070,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--cuda-kernel") == 0 && i + 1 < argc) {
             int parsed = parse_cuda_kernel_variant(argv[++i], -1);
             if (parsed < 0) {
-                fprintf(stderr, "invalid --cuda-kernel, use standard or dual\n");
+                fprintf(stderr, "invalid --cuda-kernel, use standard, dual, fixed-npt1, fixed-npt2, or fixed-npt4\n");
                 return 2;
             }
             cuda_config.kernel_variant = parsed;

@@ -804,7 +804,7 @@ miner_t *miner_create_with_backend_options(int thread_count,
             miner->cuda_config.max_results = MINER_CUDA_DEFAULT_MAX_RESULTS;
         }
         if (miner->cuda_config.kernel_variant < MINER_CUDA_KERNEL_STANDARD ||
-            miner->cuda_config.kernel_variant > MINER_CUDA_KERNEL_DUAL) {
+            miner->cuda_config.kernel_variant > MINER_CUDA_KERNEL_LAST) {
             miner->cuda_config.kernel_variant = MINER_CUDA_DEFAULT_KERNEL_VARIANT;
         }
     }

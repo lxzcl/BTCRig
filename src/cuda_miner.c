@@ -221,14 +221,33 @@ static uint32_t clamp_nonces_per_thread(uint32_t value) {
 }
 
 static int normalize_kernel_variant(int value) {
-    if (value < MINER_CUDA_KERNEL_STANDARD || value > MINER_CUDA_KERNEL_DUAL) {
+    if (value < MINER_CUDA_KERNEL_STANDARD || value > MINER_CUDA_KERNEL_LAST) {
         return MINER_CUDA_DEFAULT_KERNEL_VARIANT;
     }
     return value;
 }
 
+static uint32_t kernel_variant_forced_npt(int variant) {
+    switch (normalize_kernel_variant(variant)) {
+    case MINER_CUDA_KERNEL_FIXED_NPT1:
+        return 1U;
+    case MINER_CUDA_KERNEL_FIXED_NPT2:
+        return 2U;
+    case MINER_CUDA_KERNEL_FIXED_NPT4:
+        return 4U;
+    default:
+        return 0U;
+    }
+}
+
 const char *cuda_miner_kernel_variant_name(int variant) {
     switch (normalize_kernel_variant(variant)) {
+    case MINER_CUDA_KERNEL_FIXED_NPT1:
+        return "fixed-npt1";
+    case MINER_CUDA_KERNEL_FIXED_NPT2:
+        return "fixed-npt2";
+    case MINER_CUDA_KERNEL_FIXED_NPT4:
+        return "fixed-npt4";
     case MINER_CUDA_KERNEL_DUAL:
         return "dual";
     case MINER_CUDA_KERNEL_STANDARD:
@@ -239,6 +258,12 @@ const char *cuda_miner_kernel_variant_name(int variant) {
 
 static const char *cuda_miner_kernel_function_name(int variant) {
     switch (normalize_kernel_variant(variant)) {
+    case MINER_CUDA_KERNEL_FIXED_NPT1:
+        return "btcrig_cuda_scan_nonce_range_fixed_npt1";
+    case MINER_CUDA_KERNEL_FIXED_NPT2:
+        return "btcrig_cuda_scan_nonce_range_fixed_npt2";
+    case MINER_CUDA_KERNEL_FIXED_NPT4:
+        return "btcrig_cuda_scan_nonce_range_fixed_npt4";
     case MINER_CUDA_KERNEL_DUAL:
         return "btcrig_cuda_scan_nonce_range_dual";
     case MINER_CUDA_KERNEL_STANDARD:
@@ -324,6 +349,10 @@ cuda_miner_t *cuda_miner_create(const miner_cuda_config_t *config,
     effective.nonces_per_thread = clamp_nonces_per_thread(effective.nonces_per_thread);
     effective.max_results = config_u32_or(effective.max_results, MINER_CUDA_DEFAULT_MAX_RESULTS);
     effective.kernel_variant = normalize_kernel_variant(effective.kernel_variant);
+    uint32_t forced_npt = kernel_variant_forced_npt(effective.kernel_variant);
+    if (forced_npt != 0U) {
+        effective.nonces_per_thread = forced_npt;
+    }
 
     if (cuda_driver_load(error, error_size) != 0) {
         return NULL;

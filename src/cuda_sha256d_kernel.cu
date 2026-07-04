@@ -356,6 +356,88 @@ extern "C" __attribute__((global)) void btcrig_cuda_scan_nonce_range_dual(
     }
 }
 
+extern "C" __attribute__((global)) void btcrig_cuda_scan_nonce_range_fixed_npt1(
+    u32 fast0, u32 fast1, u32 fast2, u32 fast3,
+    u32 fast4, u32 fast5, u32 fast6, u32 fast7,
+    u32 target0, u32 target1, u32 target2, u32 target3,
+    u32 target4, u32 target5, u32 target6, u32 target7,
+    u32 tail0, u32 tail1, u32 tail2,
+    u32 start_nonce, u32 nonce_count,
+    u32 nonces_per_thread,
+    u32 max_results,
+    u32 *result_count,
+    u32 *matches) {
+    (void)nonces_per_thread;
+    u32 gid = cuda_ctaid_x() * cuda_ntid_x() + cuda_tid_x();
+    if (gid >= nonce_count) {
+        return;
+    }
+    scan_one_nonce(fast0, fast1, fast2, fast3, fast4, fast5, fast6, fast7,
+                   target0, target1, target2, target3, target4, target5, target6, target7,
+                   tail0, tail1, tail2, start_nonce + gid,
+                   max_results, result_count, matches);
+}
+
+extern "C" __attribute__((global)) void btcrig_cuda_scan_nonce_range_fixed_npt2(
+    u32 fast0, u32 fast1, u32 fast2, u32 fast3,
+    u32 fast4, u32 fast5, u32 fast6, u32 fast7,
+    u32 target0, u32 target1, u32 target2, u32 target3,
+    u32 target4, u32 target5, u32 target6, u32 target7,
+    u32 tail0, u32 tail1, u32 tail2,
+    u32 start_nonce, u32 nonce_count,
+    u32 nonces_per_thread,
+    u32 max_results,
+    u32 *result_count,
+    u32 *matches) {
+    (void)nonces_per_thread;
+    u32 gid = cuda_ctaid_x() * cuda_ntid_x() + cuda_tid_x();
+    u32 base_nonce = gid * 2U;
+    if (base_nonce >= nonce_count) {
+        return;
+    }
+    u32 limit = nonce_count - base_nonce;
+    if (limit > 2U) {
+        limit = 2U;
+    }
+    #pragma clang loop unroll(disable)
+    for (u32 item = 0U; item < limit; ++item) {
+        scan_one_nonce(fast0, fast1, fast2, fast3, fast4, fast5, fast6, fast7,
+                       target0, target1, target2, target3, target4, target5, target6, target7,
+                       tail0, tail1, tail2, start_nonce + base_nonce + item,
+                       max_results, result_count, matches);
+    }
+}
+
+extern "C" __attribute__((global)) void btcrig_cuda_scan_nonce_range_fixed_npt4(
+    u32 fast0, u32 fast1, u32 fast2, u32 fast3,
+    u32 fast4, u32 fast5, u32 fast6, u32 fast7,
+    u32 target0, u32 target1, u32 target2, u32 target3,
+    u32 target4, u32 target5, u32 target6, u32 target7,
+    u32 tail0, u32 tail1, u32 tail2,
+    u32 start_nonce, u32 nonce_count,
+    u32 nonces_per_thread,
+    u32 max_results,
+    u32 *result_count,
+    u32 *matches) {
+    (void)nonces_per_thread;
+    u32 gid = cuda_ctaid_x() * cuda_ntid_x() + cuda_tid_x();
+    u32 base_nonce = gid * 4U;
+    if (base_nonce >= nonce_count) {
+        return;
+    }
+    u32 limit = nonce_count - base_nonce;
+    if (limit > 4U) {
+        limit = 4U;
+    }
+    #pragma clang loop unroll(disable)
+    for (u32 item = 0U; item < limit; ++item) {
+        scan_one_nonce(fast0, fast1, fast2, fast3, fast4, fast5, fast6, fast7,
+                       target0, target1, target2, target3, target4, target5, target6, target7,
+                       tail0, tail1, tail2, start_nonce + base_nonce + item,
+                       max_results, result_count, matches);
+    }
+}
+
 extern "C" __attribute__((global)) void btcrig_cuda_scan_nonce_range(
     u32 fast0, u32 fast1, u32 fast2, u32 fast3,
     u32 fast4, u32 fast5, u32 fast6, u32 fast7,
