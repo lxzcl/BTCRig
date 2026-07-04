@@ -50,7 +50,7 @@ BTCRig 是一个跨平台 C 项目，提供 SHA256d 基准、Stratum V1 挖矿�
 
 - 自动选择 x86 SHA-NI、ARMv8 SHA2、OpenSSL 或普通 C 后端。
 - 可选 OpenCL GPU 路径，包含 compat10 兜底和 OpenCL 1.2+ modern fixed-npi/register-heavy 候选，运行时默认关闭。
-- 可选 CUDA GPU 路径，使用 NVIDIA Driver API 和内嵌 PTX；运行时默认关闭，目标机器不需要安装 CUDA Toolkit。
+- 可选 CUDA GPU 路径，使用 NVIDIA Driver API 和内嵌 PTX，包含 standard 和 dual nonce kernel 变体；运行时默认关闭，目标机器不需要安装 CUDA Toolkit。
 - CPU/GPU 混合 nonce 调度：GPU worker 保持较大的调度 batch，CPU worker 在混合模式下自动使用较小块，降低新 job 到来后的旧任务滞留。
 - x86 SHA-NI 双路交错扫描，ARMv8 SHA2 专用 range scan。
 - 默认使用全部逻辑 CPU，也可以手动指定线程数。
@@ -237,11 +237,12 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 --opencl-kernel NAME       OpenCL kernel 变体：auto、compact、unrolled、fixed-npi1、fixed-npi2、fixed-npi4 或 register-heavy
 --opencl-self-test         不连接矿池，验证编译后的 OpenCL kernel
 --cuda                     启用 CUDA worker
---cuda-autotune            不连接矿池，测试 CUDA batch/block/npt 候选参数
+--cuda-autotune            不连接矿池，测试 CUDA kernel/batch/block/npt 候选参数
 --cuda-device N            CUDA 设备编号
 --cuda-batch N             每次 CUDA 调度扫描的 nonce 数
 --cuda-block N             CUDA threads per block
 --cuda-npt N               每个 CUDA thread 扫描的 nonce 数
+--cuda-kernel NAME         CUDA kernel 变体：standard 或 dual
 --cuda-self-test           不连接矿池，验证内嵌 CUDA PTX
 --autotune                 强制重新运行首次 CPU/GPU 调优并更新配置
 --no-autotune              跳过自动首次调优
@@ -295,6 +296,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
     "batch-size": 4194304,
     "threads-per-block": 256,
     "nonces-per-thread": 1,
+    "kernel": "standard",
     "max-results": 256
   },
   "pools": [
@@ -319,9 +321,9 @@ OpenCL 和 CUDA 都是运行时可选模块。构建机器如果有 OpenCL 头�
 
 CPU、OpenCL 和 CUDA worker 共用一个 nonce 分配器，因此不会扫描重叠 nonce。纯 CPU 模式下 CPU worker 使用较大的 nonce 块；只要存在 GPU worker，CPU worker 会自动切换为较小块，而 GPU worker 继续使用配置中的 `batch-size`。新 job、暂停/恢复和停止会直接唤醒等待中的 worker，不再只依赖周期性轮询。
 
-默认配置中 `autotune.enabled=true`、`autotune.cpu-self-test=false` 且 `autotune.gpu-self-test=false`。第一次正常挖矿启动时，程序会先离线运行 self-test 和基准测试，再连接矿池。CPU 和 GPU 的完成标记会分开记录：只运行 CPU 时只会把 `cpu-self-test` 改成 `true`，之后再启用 OpenCL 或 CUDA 仍会触发 GPU 调优，并保留已有 CPU 结果。只有当 `config.json` 中 `opencl.enabled=true`、`cuda.enabled=true`，或者命令行传入对应 GPU 参数时，自动调优才会测试 GPU 模式；默认 GPU 后端关闭时只测试 CPU，并保持 GPU 后端关闭。如果 OpenCL 已启用，它会先对每张 OpenCL GPU 分阶段测试 `backend`、`kernel`、`local-work-size`、`nonces-per-work-item` 和 `batch-size`，然后测试 CPU-only、全部 GPU、CPU+全部 GPU、半数 CPU+全部 GPU、每张单独 GPU、CPU+每张单独 GPU；如果机器有超过两张 GPU，还会测试“全部 GPU 去掉其中一张”的组合。如果 CUDA 已启用，会先预热选中的 NVIDIA 设备，调优 `threads-per-block`、`nonces-per-thread` 和 `batch-size`，再测试 CUDA-only、CPU+CUDA 和半数 CPU+CUDA。测试结束后会把最快模式和每种模式的算力写回 `config.json`。旧版 `autotune.self-test`、`self_test`、`done` 和 `completed` 字段仍会作为 CPU 完成标记兼容读取。
+默认配置中 `autotune.enabled=true`、`autotune.cpu-self-test=false` 且 `autotune.gpu-self-test=false`。第一次正常挖矿启动时，程序会先离线运行 self-test 和基准测试，再连接矿池。CPU 和 GPU 的完成标记会分开记录：只运行 CPU 时只会把 `cpu-self-test` 改成 `true`，之后再启用 OpenCL 或 CUDA 仍会触发 GPU 调优，并保留已有 CPU 结果。只有当 `config.json` 中 `opencl.enabled=true`、`cuda.enabled=true`，或者命令行传入对应 GPU 参数时，自动调优才会测试 GPU 模式；默认 GPU 后端关闭时只测试 CPU，并保持 GPU 后端关闭。如果 OpenCL 已启用，它会先对每张 OpenCL GPU 分阶段测试 `backend`、`kernel`、`local-work-size`、`nonces-per-work-item` 和 `batch-size`，然后测试 CPU-only、全部 GPU、CPU+全部 GPU、半数 CPU+全部 GPU、每张单独 GPU、CPU+每张单独 GPU；如果机器有超过两张 GPU，还会测试“全部 GPU 去掉其中一张”的组合。如果 CUDA 已启用，会先预热选中的 NVIDIA 设备，调优 `kernel`、`threads-per-block`、`nonces-per-thread` 和 `batch-size`，再测试 CUDA-only、CPU+CUDA 和半数 CPU+CUDA。测试结束后会把最快模式和每种模式的算力写回 `config.json`。旧版 `autotune.self-test`、`self_test`、`done` 和 `completed` 字段仍会作为 CPU 完成标记兼容读取。
 
-这里故意不穷举所有 CPU/GPU 子集。高价值组合已经能覆盖常见情况：独显加核显、CPU 线程和 GPU 驱动抢资源、某张慢卡或不稳定卡拖累整体。换驱动、改频率、换硬件，或调整 OpenCL batch/local/npi、CUDA batch/block/npt 后，可以用 `--autotune` 重新测试。
+这里故意不穷举所有 CPU/GPU 子集。高价值组合已经能覆盖常见情况：独显加核显、CPU 线程和 GPU 驱动抢资源、某张慢卡或不稳定卡拖累整体。换驱动、改频率、换硬件，或调整 OpenCL batch/local/npi、CUDA kernel/batch/block/npt 后，可以用 `--autotune` 重新测试。
 
 ## SHA 后端
 
@@ -354,9 +356,12 @@ CUDA 可以通过 `config.json` 或命令行启用：
 ./build/btc_bench --cuda-info
 ./build/btc_bench --cuda-autotune --cuda-device 0 -s 2
 ./build/btc_bench --cuda --cuda-device 0 -s 10
+./build/btc_bench --cuda --cuda-device 0 --cuda-kernel dual --cuda-npt 2 -s 10
 ./build/btc_stratum --no-cpu --cuda --cuda-device 0
 ./build/btc_stratum --cuda-self-test --cuda-device 0
 ```
+
+`cuda.kernel` 支持 `standard` 或 `dual`。默认使用 `standard`；`--cuda-autotune` 会测试两个变体，并为当前 GPU 保留最快的稳定结果。
 
 也可以显式指定多张 OpenCL GPU：
 

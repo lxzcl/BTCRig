@@ -54,6 +54,9 @@ typedef struct {
 #define MINER_CUDA_DEFAULT_THREADS_PER_BLOCK 256U
 #define MINER_CUDA_DEFAULT_NONCES_PER_THREAD 1U
 #define MINER_CUDA_DEFAULT_MAX_RESULTS 256U
+#define MINER_CUDA_KERNEL_STANDARD 0
+#define MINER_CUDA_KERNEL_DUAL 1
+#define MINER_CUDA_DEFAULT_KERNEL_VARIANT MINER_CUDA_KERNEL_STANDARD
 
 typedef struct {
     int enabled;
@@ -62,6 +65,7 @@ typedef struct {
     uint32_t threads_per_block;
     uint32_t nonces_per_thread;
     uint32_t max_results;
+    int kernel_variant;
 } miner_cuda_config_t;
 #endif
 

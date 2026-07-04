@@ -76,6 +76,7 @@ struct cuda_miner {
     uint32_t threads_per_block;
     uint32_t nonces_per_thread;
     uint32_t max_results;
+    int kernel_variant;
     int driver_version;
     int compute_major;
     int compute_minor;
@@ -219,6 +220,33 @@ static uint32_t clamp_nonces_per_thread(uint32_t value) {
     return value;
 }
 
+static int normalize_kernel_variant(int value) {
+    if (value < MINER_CUDA_KERNEL_STANDARD || value > MINER_CUDA_KERNEL_DUAL) {
+        return MINER_CUDA_DEFAULT_KERNEL_VARIANT;
+    }
+    return value;
+}
+
+const char *cuda_miner_kernel_variant_name(int variant) {
+    switch (normalize_kernel_variant(variant)) {
+    case MINER_CUDA_KERNEL_DUAL:
+        return "dual";
+    case MINER_CUDA_KERNEL_STANDARD:
+    default:
+        return "standard";
+    }
+}
+
+static const char *cuda_miner_kernel_function_name(int variant) {
+    switch (normalize_kernel_variant(variant)) {
+    case MINER_CUDA_KERNEL_DUAL:
+        return "btcrig_cuda_scan_nonce_range_dual";
+    case MINER_CUDA_KERNEL_STANDARD:
+    default:
+        return "btcrig_cuda_scan_nonce_range";
+    }
+}
+
 void miner_cuda_config_defaults(miner_cuda_config_t *config) {
     if (config == NULL) {
         return;
@@ -230,6 +258,7 @@ void miner_cuda_config_defaults(miner_cuda_config_t *config) {
     config->threads_per_block = MINER_CUDA_DEFAULT_THREADS_PER_BLOCK;
     config->nonces_per_thread = MINER_CUDA_DEFAULT_NONCES_PER_THREAD;
     config->max_results = MINER_CUDA_DEFAULT_MAX_RESULTS;
+    config->kernel_variant = MINER_CUDA_DEFAULT_KERNEL_VARIANT;
 }
 
 int cuda_miner_driver_available(char *error, size_t error_size) {
@@ -294,6 +323,7 @@ cuda_miner_t *cuda_miner_create(const miner_cuda_config_t *config,
     effective.threads_per_block = clamp_threads_per_block(effective.threads_per_block);
     effective.nonces_per_thread = clamp_nonces_per_thread(effective.nonces_per_thread);
     effective.max_results = config_u32_or(effective.max_results, MINER_CUDA_DEFAULT_MAX_RESULTS);
+    effective.kernel_variant = normalize_kernel_variant(effective.kernel_variant);
 
     if (cuda_driver_load(error, error_size) != 0) {
         return NULL;
@@ -324,6 +354,7 @@ cuda_miner_t *cuda_miner_create(const miner_cuda_config_t *config,
     miner->threads_per_block = effective.threads_per_block;
     miner->nonces_per_thread = effective.nonces_per_thread;
     miner->max_results = effective.max_results;
+    miner->kernel_variant = effective.kernel_variant;
 
     rc = g_cuda.cuDriverGetVersion(&miner->driver_version);
     if (rc != CUDA_SUCCESS) {
@@ -352,7 +383,9 @@ cuda_miner_t *cuda_miner_create(const miner_cuda_config_t *config,
         return NULL;
     }
 
-    rc = g_cuda.cuModuleGetFunction(&miner->kernel, miner->module, "btcrig_cuda_scan_nonce_range");
+    rc = g_cuda.cuModuleGetFunction(&miner->kernel,
+                                    miner->module,
+                                    cuda_miner_kernel_function_name(miner->kernel_variant));
     if (rc != CUDA_SUCCESS) {
         set_cuda_error(error, error_size, "failed to find CUDA SHA256d kernel", rc);
         cuda_miner_destroy(miner);
@@ -417,6 +450,10 @@ uint32_t cuda_miner_threads_per_block(const cuda_miner_t *miner) {
 
 uint32_t cuda_miner_nonces_per_thread(const cuda_miner_t *miner) {
     return miner != NULL ? miner->nonces_per_thread : MINER_CUDA_DEFAULT_NONCES_PER_THREAD;
+}
+
+int cuda_miner_kernel_variant(const cuda_miner_t *miner) {
+    return miner != NULL ? miner->kernel_variant : MINER_CUDA_DEFAULT_KERNEL_VARIANT;
 }
 
 const char *cuda_miner_device_name(const cuda_miner_t *miner) {

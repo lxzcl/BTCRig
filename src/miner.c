@@ -803,6 +803,10 @@ miner_t *miner_create_with_backend_options(int thread_count,
         if (miner->cuda_config.max_results == 0) {
             miner->cuda_config.max_results = MINER_CUDA_DEFAULT_MAX_RESULTS;
         }
+        if (miner->cuda_config.kernel_variant < MINER_CUDA_KERNEL_STANDARD ||
+            miner->cuda_config.kernel_variant > MINER_CUDA_KERNEL_DUAL) {
+            miner->cuda_config.kernel_variant = MINER_CUDA_DEFAULT_KERNEL_VARIANT;
+        }
     }
     return miner;
 }
@@ -946,7 +950,7 @@ int miner_start(miner_t *miner) {
                         error[0] != '\0' ? error : "unknown error");
             } else {
                 miner->cuda_started = 1;
-                printf("%s[CUDA]%s device=%d self-test=ok name=%s%s%s compute=sm_%d%d driver=%d batch=%u block=%u npt=%u\n",
+                printf("%s[CUDA]%s device=%d self-test=ok name=%s%s%s compute=sm_%d%d driver=%d kernel=%s batch=%u block=%u npt=%u\n",
                        C_CYAN,
                        C_RESET,
                        miner->cuda_config.device,
@@ -956,6 +960,7 @@ int miner_start(miner_t *miner) {
                        cuda_miner_compute_major(miner->cuda_device),
                        cuda_miner_compute_minor(miner->cuda_device),
                        cuda_miner_driver_version(miner->cuda_device),
+                       cuda_miner_kernel_variant_name(cuda_miner_kernel_variant(miner->cuda_device)),
                        cuda_miner_batch_size(miner->cuda_device),
                        cuda_miner_threads_per_block(miner->cuda_device),
                        cuda_miner_nonces_per_thread(miner->cuda_device));

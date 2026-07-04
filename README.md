@@ -50,7 +50,7 @@ Run the same local benchmark when comparing builds:
 
 - Automatic backend selection: x86 SHA-NI, ARMv8 SHA2, OpenSSL, or portable C.
 - Optional OpenCL GPU path with compat10 fallback and OpenCL 1.2+ modern fixed-npi/register-heavy candidates; disabled by default at runtime.
-- Optional CUDA GPU path using the NVIDIA driver API and embedded PTX; disabled by default at runtime and does not require the CUDA Toolkit on the target machine.
+- Optional CUDA GPU path using the NVIDIA driver API and embedded PTX, with standard and dual nonce kernel variants; disabled by default at runtime and does not require the CUDA Toolkit on the target machine.
 - Mixed CPU/GPU nonce scheduler: GPU workers keep large dispatch batches while CPU workers use smaller chunks for faster job turnover.
 - Two-lane interleaved x86 SHA-NI scanning and dedicated ARMv8 SHA2 range scanning.
 - Uses every logical CPU by default; thread count remains configurable.
@@ -237,11 +237,12 @@ Common commands:
 --opencl-kernel NAME       OpenCL kernel variant: auto, compact, unrolled, fixed-npi1, fixed-npi2, fixed-npi4, or register-heavy
 --opencl-self-test         verify the compiled OpenCL kernel without connecting to a pool
 --cuda                     enable the CUDA worker
---cuda-autotune            benchmark CUDA batch/block/npt candidates without connecting to a pool
+--cuda-autotune            benchmark CUDA kernel/batch/block/npt candidates without connecting to a pool
 --cuda-device N            CUDA device index
 --cuda-batch N             nonce batch size per CUDA dispatch
 --cuda-block N             CUDA threads per block
 --cuda-npt N               nonces scanned by each CUDA thread
+--cuda-kernel NAME         CUDA kernel variant: standard or dual
 --cuda-self-test           verify the embedded CUDA PTX without connecting to a pool
 --autotune                 force first-run CPU/GPU benchmark and update config
 --no-autotune              skip automatic first-run benchmark
@@ -295,6 +296,7 @@ Interactive keys while mining:
     "batch-size": 4194304,
     "threads-per-block": 256,
     "nonces-per-thread": 1,
+    "kernel": "standard",
     "max-results": 256
   },
   "pools": [
@@ -319,9 +321,9 @@ OpenCL and CUDA are opt-in at runtime. If the build machine has OpenCL headers a
 
 CPU, OpenCL, and CUDA workers share one nonce allocator, so ranges do not overlap. In CPU-only mode CPU workers use larger nonce chunks; when any GPU worker is active, CPU chunks are reduced while GPU workers keep their configured `batch-size`. New jobs, pause/resume, and shutdown wake waiting workers directly instead of relying on periodic polling.
 
-With the default `autotune.enabled=true`, `autotune.cpu-self-test=false`, and `autotune.gpu-self-test=false`, the first normal mining run performs an offline self-test and benchmark before connecting to the pool. CPU and GPU completion flags are tracked separately: a CPU-only run only sets `cpu-self-test=true`, so enabling OpenCL or CUDA later still triggers GPU tuning while preserving the CPU result. GPU modes are benchmarked only when `opencl.enabled=true`, `cuda.enabled=true`, or the matching command-line option is passed. If both GPU backends are disabled, autotune stays CPU-only and preserves both as disabled. If OpenCL is enabled, it first tunes each OpenCL GPU with staged `backend`, `kernel`, `local-work-size`, `nonces-per-work-item`, and `batch-size` probes, then measures CPU-only, all-GPU, CPU+all-GPU, half-CPU+all-GPU, each single GPU, CPU+each single GPU, and for systems with more than two GPUs the "all GPUs except one" cases. If CUDA is enabled, it warms the selected NVIDIA device, tunes `threads-per-block`, `nonces-per-thread`, and `batch-size`, then measures CUDA-only, CPU+CUDA, and half-CPU+CUDA. The fastest mode is written back to `config.json` together with the measured hashrates. Legacy `autotune.self-test`, `self_test`, `done`, and `completed` fields are still accepted as CPU completion flags for older configs.
+With the default `autotune.enabled=true`, `autotune.cpu-self-test=false`, and `autotune.gpu-self-test=false`, the first normal mining run performs an offline self-test and benchmark before connecting to the pool. CPU and GPU completion flags are tracked separately: a CPU-only run only sets `cpu-self-test=true`, so enabling OpenCL or CUDA later still triggers GPU tuning while preserving the CPU result. GPU modes are benchmarked only when `opencl.enabled=true`, `cuda.enabled=true`, or the matching command-line option is passed. If both GPU backends are disabled, autotune stays CPU-only and preserves both as disabled. If OpenCL is enabled, it first tunes each OpenCL GPU with staged `backend`, `kernel`, `local-work-size`, `nonces-per-work-item`, and `batch-size` probes, then measures CPU-only, all-GPU, CPU+all-GPU, half-CPU+all-GPU, each single GPU, CPU+each single GPU, and for systems with more than two GPUs the "all GPUs except one" cases. If CUDA is enabled, it warms the selected NVIDIA device, tunes `kernel`, `threads-per-block`, `nonces-per-thread`, and `batch-size`, then measures CUDA-only, CPU+CUDA, and half-CPU+CUDA. The fastest mode is written back to `config.json` together with the measured hashrates. Legacy `autotune.self-test`, `self_test`, `done`, and `completed` fields are still accepted as CPU completion flags for older configs.
 
-This deliberately avoids trying every possible CPU/GPU subset. The high-value modes catch the common cases: a discrete GPU plus an integrated GPU, CPU contention with the GPU driver, and one slow or unstable GPU dragging down the group. Use `--autotune` to rerun the benchmark after changing drivers, clocks, hardware, OpenCL batch/local/npi settings, or CUDA batch/block/npt settings.
+This deliberately avoids trying every possible CPU/GPU subset. The high-value modes catch the common cases: a discrete GPU plus an integrated GPU, CPU contention with the GPU driver, and one slow or unstable GPU dragging down the group. Use `--autotune` to rerun the benchmark after changing drivers, clocks, hardware, OpenCL batch/local/npi settings, or CUDA kernel/batch/block/npt settings.
 
 ## Backends
 
@@ -354,9 +356,12 @@ CUDA can be enabled from `config.json` or from the command line:
 ./build/btc_bench --cuda-info
 ./build/btc_bench --cuda-autotune --cuda-device 0 -s 2
 ./build/btc_bench --cuda --cuda-device 0 -s 10
+./build/btc_bench --cuda --cuda-device 0 --cuda-kernel dual --cuda-npt 2 -s 10
 ./build/btc_stratum --no-cpu --cuda --cuda-device 0
 ./build/btc_stratum --cuda-self-test --cuda-device 0
 ```
+
+`cuda.kernel` accepts `standard` or `dual`. The default is `standard`; `--cuda-autotune` tests both variants and keeps the fastest stable result for the selected GPU.
 
 Multiple OpenCL GPUs can be selected explicitly:
 

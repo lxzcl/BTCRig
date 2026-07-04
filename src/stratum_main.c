@@ -477,6 +477,28 @@ static int parse_opencl_backend_variant(const char *value, int fallback) {
     return fallback;
 }
 
+static int parse_cuda_kernel_variant(const char *value, int fallback) {
+    if (value == NULL || value[0] == '\0' || string_equals_ci(value, "standard")) {
+        return MINER_CUDA_KERNEL_STANDARD;
+    }
+    if (string_equals_ci(value, "dual") ||
+        string_equals_ci(value, "dual-nonce") ||
+        string_equals_ci(value, "dual_nonce")) {
+        return MINER_CUDA_KERNEL_DUAL;
+    }
+    return fallback;
+}
+
+static const char *cuda_kernel_variant_name(int variant) {
+    switch (variant) {
+    case MINER_CUDA_KERNEL_DUAL:
+        return "dual";
+    case MINER_CUDA_KERNEL_STANDARD:
+    default:
+        return "standard";
+    }
+}
+
 static void app_config_set_defaults(app_config_t *config) {
     memset(config, 0, sizeof(*config));
     config->pool_count = 1;
@@ -719,6 +741,12 @@ static int load_config_file(app_config_t *config, const char *path, int required
                                                         config->cuda.nonces_per_thread);
         config->cuda.max_results = json_u32_value(json_object_get(cuda, "max-results"), config->cuda.max_results);
         config->cuda.max_results = json_u32_value(json_object_get(cuda, "max_results"), config->cuda.max_results);
+        config->cuda.kernel_variant = parse_cuda_kernel_variant(json_string_value(json_object_get(cuda, "kernel")),
+                                                                config->cuda.kernel_variant);
+        config->cuda.kernel_variant = parse_cuda_kernel_variant(json_string_value(json_object_get(cuda, "kernel-variant")),
+                                                                config->cuda.kernel_variant);
+        config->cuda.kernel_variant = parse_cuda_kernel_variant(json_string_value(json_object_get(cuda, "kernel_variant")),
+                                                                config->cuda.kernel_variant);
     }
 
     config->thread_count = json_int_value(json_object_get(root, "threads"), config->thread_count);
@@ -1230,12 +1258,19 @@ static void autotune_cuda_params(miner_cuda_config_t *config, double seconds) {
         8388608U,
         16777216U,
     };
+    const uint32_t kernel_candidates_raw[] = {
+        (uint32_t)config->kernel_variant,
+        MINER_CUDA_KERNEL_STANDARD,
+        MINER_CUDA_KERNEL_DUAL,
+    };
     uint32_t block_candidates[sizeof(block_candidates_raw) / sizeof(block_candidates_raw[0])];
     uint32_t npt_candidates[sizeof(npt_candidates_raw) / sizeof(npt_candidates_raw[0])];
     uint32_t batch_candidates[sizeof(batch_candidates_raw) / sizeof(batch_candidates_raw[0])];
+    uint32_t kernel_candidates[sizeof(kernel_candidates_raw) / sizeof(kernel_candidates_raw[0])];
     int block_count = 0;
     int npt_count = 0;
     int batch_count = 0;
+    int kernel_count = 0;
 
     for (size_t i = 0; i < sizeof(block_candidates_raw) / sizeof(block_candidates_raw[0]); ++i) {
         uint32_t value = autotune_cuda_block_value(block_candidates_raw[i]);
@@ -1255,63 +1290,83 @@ static void autotune_cuda_params(miner_cuda_config_t *config, double seconds) {
             batch_candidates[batch_count++] = value;
         }
     }
+    for (size_t i = 0; i < sizeof(kernel_candidates_raw) / sizeof(kernel_candidates_raw[0]); ++i) {
+        uint32_t value = kernel_candidates_raw[i];
+        if (value > MINER_CUDA_KERNEL_DUAL) {
+            continue;
+        }
+        if (!value_seen_u32(kernel_candidates, kernel_count, value)) {
+            kernel_candidates[kernel_count++] = value;
+        }
+    }
 
     miner_cuda_config_t best_config = *config;
     best_config.enabled = 1;
     best_config.batch_size = autotune_cuda_batch_value(best_config.batch_size);
     best_config.threads_per_block = autotune_cuda_block_value(best_config.threads_per_block);
     best_config.nonces_per_thread = autotune_cuda_npt_value(best_config.nonces_per_thread);
+    if (best_config.kernel_variant < MINER_CUDA_KERNEL_STANDARD ||
+        best_config.kernel_variant > MINER_CUDA_KERNEL_DUAL) {
+        best_config.kernel_variant = MINER_CUDA_DEFAULT_KERNEL_VARIANT;
+    }
     double best_hashrate = 0.0;
     int best_ok = 0;
 
-    printf("%s[AUTOTUNE]%s warming CUDA device=%d batch=%u block=%u npt=%u\n",
+    printf("%s[AUTOTUNE]%s warming CUDA device=%d kernel=%s batch=%u block=%u npt=%u\n",
            C_CYAN,
            C_RESET,
            best_config.device,
+           cuda_kernel_variant_name(best_config.kernel_variant),
            best_config.batch_size,
            best_config.threads_per_block,
            best_config.nonces_per_thread);
     (void)autotune_run_mode(0, NULL, &best_config, seconds, NULL);
 
-    printf("%s[AUTOTUNE]%s tuning CUDA block/npt\n", C_CYAN, C_RESET);
-    for (int bi = 0; bi < block_count; ++bi) {
-        for (int ni = 0; ni < npt_count; ++ni) {
-            miner_cuda_config_t candidate = best_config;
-            int ok = 0;
+    printf("%s[AUTOTUNE]%s tuning CUDA kernel/block/npt\n", C_CYAN, C_RESET);
+    for (int ki = 0; ki < kernel_count; ++ki) {
+        for (int bi = 0; bi < block_count; ++bi) {
+            for (int ni = 0; ni < npt_count; ++ni) {
+                miner_cuda_config_t candidate = best_config;
+                int ok = 0;
 
-            candidate.threads_per_block = block_candidates[bi];
-            candidate.nonces_per_thread = npt_candidates[ni];
+                candidate.kernel_variant = (int)kernel_candidates[ki];
+                candidate.threads_per_block = block_candidates[bi];
+                candidate.nonces_per_thread = npt_candidates[ni];
 
-            printf("%s[AUTOTUNE]%s testing cuda device=%d batch=%u block=%u npt=%u\n",
-                   C_CYAN,
-                   C_RESET,
-                   candidate.device,
-                   candidate.batch_size,
-                   candidate.threads_per_block,
-                   candidate.nonces_per_thread);
-            double hashrate = autotune_run_mode(0, NULL, &candidate, seconds, &ok);
-            if (ok) {
-                printf("%s[AUTOTUNE]%s cuda device=%d batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
+                printf("%s[AUTOTUNE]%s testing cuda device=%d kernel=%s batch=%u block=%u npt=%u\n",
                        C_CYAN,
                        C_RESET,
                        candidate.device,
-                       candidate.batch_size,
-                       candidate.threads_per_block,
-                       candidate.nonces_per_thread,
-                       hashrate / 1000000.0);
-            } else {
-                printf("%s[AUTOTUNE]%s cuda device=%d batch=%u block=%u npt=%u unavailable\n",
-                       C_YELLOW,
-                       C_RESET,
-                       candidate.device,
+                       cuda_kernel_variant_name(candidate.kernel_variant),
                        candidate.batch_size,
                        candidate.threads_per_block,
                        candidate.nonces_per_thread);
-            }
-            if (ok && (!best_ok || autotune_hashrate_is_better(hashrate, best_hashrate))) {
-                best_ok = 1;
-                best_hashrate = hashrate;
-                best_config = candidate;
+                double hashrate = autotune_run_mode(0, NULL, &candidate, seconds, &ok);
+                if (ok) {
+                    printf("%s[AUTOTUNE]%s cuda device=%d kernel=%s batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
+                           C_CYAN,
+                           C_RESET,
+                           candidate.device,
+                           cuda_kernel_variant_name(candidate.kernel_variant),
+                           candidate.batch_size,
+                           candidate.threads_per_block,
+                           candidate.nonces_per_thread,
+                           hashrate / 1000000.0);
+                } else {
+                    printf("%s[AUTOTUNE]%s cuda device=%d kernel=%s batch=%u block=%u npt=%u unavailable\n",
+                           C_YELLOW,
+                           C_RESET,
+                           candidate.device,
+                           cuda_kernel_variant_name(candidate.kernel_variant),
+                           candidate.batch_size,
+                           candidate.threads_per_block,
+                           candidate.nonces_per_thread);
+                }
+                if (ok && (!best_ok || autotune_hashrate_is_better(hashrate, best_hashrate))) {
+                    best_ok = 1;
+                    best_hashrate = hashrate;
+                    best_config = candidate;
+                }
             }
         }
     }
@@ -1326,28 +1381,31 @@ static void autotune_cuda_params(miner_cuda_config_t *config, double seconds) {
         int ok = 0;
 
         candidate.batch_size = batch_candidates[bi];
-        printf("%s[AUTOTUNE]%s testing cuda device=%d batch=%u block=%u npt=%u\n",
+        printf("%s[AUTOTUNE]%s testing cuda device=%d kernel=%s batch=%u block=%u npt=%u\n",
                C_CYAN,
                C_RESET,
                candidate.device,
+               cuda_kernel_variant_name(candidate.kernel_variant),
                candidate.batch_size,
                candidate.threads_per_block,
                candidate.nonces_per_thread);
         double hashrate = autotune_run_mode(0, NULL, &candidate, seconds, &ok);
         if (ok) {
-            printf("%s[AUTOTUNE]%s cuda device=%d batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
+            printf("%s[AUTOTUNE]%s cuda device=%d kernel=%s batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
                    C_CYAN,
                    C_RESET,
                    candidate.device,
+                   cuda_kernel_variant_name(candidate.kernel_variant),
                    candidate.batch_size,
                    candidate.threads_per_block,
                    candidate.nonces_per_thread,
                    hashrate / 1000000.0);
         } else {
-            printf("%s[AUTOTUNE]%s cuda device=%d batch=%u block=%u npt=%u unavailable\n",
+            printf("%s[AUTOTUNE]%s cuda device=%d kernel=%s batch=%u block=%u npt=%u unavailable\n",
                    C_YELLOW,
                    C_RESET,
                    candidate.device,
+                   cuda_kernel_variant_name(candidate.kernel_variant),
                    candidate.batch_size,
                    candidate.threads_per_block,
                    candidate.nonces_per_thread);
@@ -1359,10 +1417,11 @@ static void autotune_cuda_params(miner_cuda_config_t *config, double seconds) {
     }
 
     *config = best_config;
-    printf("%s[AUTOTUNE]%s CUDA final device=%d batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
+    printf("%s[AUTOTUNE]%s CUDA final device=%d kernel=%s batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
            C_BRIGHT_GREEN,
            C_RESET,
            config->device,
+           cuda_kernel_variant_name(config->kernel_variant),
            config->batch_size,
            config->threads_per_block,
            config->nonces_per_thread,
@@ -1538,6 +1597,7 @@ static int save_autotune_config(const char *path,
     json_object_set_new(cuda, "batch-size", json_integer((json_int_t)config->cuda.batch_size));
     json_object_set_new(cuda, "threads-per-block", json_integer((json_int_t)config->cuda.threads_per_block));
     json_object_set_new(cuda, "nonces-per-thread", json_integer((json_int_t)config->cuda.nonces_per_thread));
+    json_object_set_new(cuda, "kernel", json_string(cuda_kernel_variant_name(config->cuda.kernel_variant)));
     json_object_set_new(cuda, "max-results", json_integer((json_int_t)config->cuda.max_results));
 
     json_object_set_new(autotune, "enabled", config->autotune_enabled ? json_true() : json_false());
@@ -1574,6 +1634,7 @@ static int save_autotune_config(const char *path,
         json_object_set_new(item, "cuda", json_string(autotune_cuda_mode_name(&result->cuda)));
         if (result->cuda.enabled) {
             json_object_set_new(item, "cuda-device", json_integer(result->cuda.device));
+            json_object_set_new(item, "cuda-kernel", json_string(cuda_kernel_variant_name(result->cuda.kernel_variant)));
             json_object_set_new(item, "cuda-batch-size", json_integer((json_int_t)result->cuda.batch_size));
             json_object_set_new(item,
                                 "cuda-threads-per-block",
@@ -1877,6 +1938,7 @@ static void usage(const char *argv0) {
     printf("     [--opencl-batch N] [--opencl-local N] [--opencl-npi N]\n");
     printf("     [--opencl-backend auto|compat10|modern] [--opencl-kernel auto|compact|unrolled|fixed-npi1|fixed-npi2|fixed-npi4|register-heavy]\n");
     printf("     [--cuda] [--cuda-device N] [--cuda-batch N] [--cuda-block N] [--cuda-npt N]\n");
+    printf("     [--cuda-kernel standard|dual]\n");
     printf("     [--autotune] [--no-autotune] [--autotune-seconds N]\n");
     printf("\nDefaults:\n");
     printf("  version: %s\n", BTCRIG_VERSION_TAG);
@@ -2100,6 +2162,16 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--cuda-npt") == 0 && i + 1 < argc) {
             app_config.cuda.nonces_per_thread = (uint32_t)strtoul(argv[++i], NULL, 10);
             worker_override = 1;
+        } else if (strcmp(argv[i], "--cuda-kernel") == 0 && i + 1 < argc) {
+            int parsed = parse_cuda_kernel_variant(argv[++i], -1);
+            if (parsed < 0) {
+                fprintf(stderr, "%s[CONFIG]%s invalid --cuda-kernel, use standard or dual\n",
+                        C_BRIGHT_RED,
+                        C_RESET);
+                return 2;
+            }
+            app_config.cuda.kernel_variant = parsed;
+            worker_override = 1;
         } else if (strcmp(argv[i], "--autotune") == 0) {
             app_config.autotune_enabled = 1;
             app_config.cpu_autotune_done = 0;
@@ -2174,7 +2246,7 @@ int main(int argc, char **argv) {
 
     const char *cuda_mode = app_config.cuda.enabled ? "single" : "off";
 
-    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mode=%s backend=%s kernel=%s cuda=%s mode=%s batch=%u block=%u npt=%u mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
+    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mode=%s backend=%s kernel=%s cuda=%s mode=%s kernel=%s batch=%u block=%u npt=%u mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
            C_CYAN,
            C_RESET,
            app_config.pool_count,
@@ -2188,6 +2260,7 @@ int main(int argc, char **argv) {
            opencl_kernel_variant_name(app_config.opencl.kernel_variant),
            app_config.cuda.enabled ? "on" : "off",
            cuda_mode,
+           cuda_kernel_variant_name(app_config.cuda.kernel_variant),
            app_config.cuda.batch_size,
            app_config.cuda.threads_per_block,
            app_config.cuda.nonces_per_thread,

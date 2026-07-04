@@ -15,6 +15,9 @@ typedef struct cuda_miner cuda_miner_t;
 #define MINER_CUDA_DEFAULT_THREADS_PER_BLOCK 256U
 #define MINER_CUDA_DEFAULT_NONCES_PER_THREAD 1U
 #define MINER_CUDA_DEFAULT_MAX_RESULTS 256U
+#define MINER_CUDA_KERNEL_STANDARD 0
+#define MINER_CUDA_KERNEL_DUAL 1
+#define MINER_CUDA_DEFAULT_KERNEL_VARIANT MINER_CUDA_KERNEL_STANDARD
 
 typedef struct {
     int enabled;
@@ -23,6 +26,7 @@ typedef struct {
     uint32_t threads_per_block;
     uint32_t nonces_per_thread;
     uint32_t max_results;
+    int kernel_variant;
 } miner_cuda_config_t;
 #endif
 
@@ -46,6 +50,8 @@ void cuda_miner_destroy(cuda_miner_t *miner);
 uint32_t cuda_miner_batch_size(const cuda_miner_t *miner);
 uint32_t cuda_miner_threads_per_block(const cuda_miner_t *miner);
 uint32_t cuda_miner_nonces_per_thread(const cuda_miner_t *miner);
+int cuda_miner_kernel_variant(const cuda_miner_t *miner);
+const char *cuda_miner_kernel_variant_name(int variant);
 const char *cuda_miner_device_name(const cuda_miner_t *miner);
 int cuda_miner_driver_version(const cuda_miner_t *miner);
 int cuda_miner_compute_major(const cuda_miner_t *miner);
