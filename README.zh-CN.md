@@ -143,7 +143,7 @@ cmake --build build -j"$(nproc)"
 
 `config.json` 默认仍然关闭 OpenCL。`-DBTCRIG_OPENCL=ON` 只表示把 GPU worker 编译进程序；实际运行时需要手动设置 `opencl.enabled=true`，或传入 `--opencl` / `--opencl-all` 才会使用显卡。
 
-`config.json` 默认也关闭 CUDA。`-DBTCRIG_CUDA=ON` 会编译 CUDA worker 和 `btc_bench --cuda`；运行时只需要 NVIDIA 驱动提供 Windows 上的 `nvcuda.dll` 或 Linux 上的 `libcuda.so.1`。只有需要用 `tools/generate_cuda_ptx.sh` 重新生成 `src/cuda_sha256d_ptx.h` 时，才需要 CUDA Toolkit 或能编译 CUDA device code 的 clang。
+`config.json` 默认也关闭 CUDA。`-DBTCRIG_CUDA=ON` 会编译 CUDA worker 和 `btc_bench --cuda`；运行时只需要 NVIDIA 驱动提供 Windows 上的 `nvcuda.dll` 或 Linux 上的 `libcuda.so.1`。只有需要用 `tools/generate_cuda_ptx.sh` 重新生成 `src/cuda_sha256d_ptx.h` 时，才需要 CUDA Toolkit 或能编译 CUDA device code 的 clang。可以用 `tools/analyze_cuda_ptx.sh sm_86` 查看内嵌 CUDA kernel 的 PTX 级寄存器和指令计数。
 
 Termux 应保持 `BTC_MINER_NATIVE=OFF`。ARM SHA2 源文件仍会使用独立的加密扩展参数编译，并通过运行时特性检测选择；关闭全局 native 调优可以避免 Android 异构 CPU 集群上的非法指令。
 
