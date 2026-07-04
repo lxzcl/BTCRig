@@ -43,6 +43,7 @@ Run the same local benchmark when comparing builds:
 ./build/btc_bench -t "$(nproc)" -s 10
 ./build/btc_bench --opencl --opencl-platform 0 --opencl-device 0 -s 10
 ./build/btc_bench --cuda --cuda-device 0 -s 10
+./build/btc_bench --cuda-autotune --cuda-device 0 -s 2
 ```
 
 ## Highlights
@@ -236,6 +237,7 @@ Common commands:
 --opencl-kernel NAME       OpenCL kernel variant: auto, compact, unrolled, fixed-npi1, fixed-npi2, fixed-npi4, or register-heavy
 --opencl-self-test         verify the compiled OpenCL kernel without connecting to a pool
 --cuda                     enable the CUDA worker
+--cuda-autotune            benchmark CUDA batch/block/npt candidates without connecting to a pool
 --cuda-device N            CUDA device index
 --cuda-batch N             nonce batch size per CUDA dispatch
 --cuda-block N             CUDA threads per block
@@ -350,6 +352,7 @@ CUDA can be enabled from `config.json` or from the command line:
 
 ```bash
 ./build/btc_bench --cuda-info
+./build/btc_bench --cuda-autotune --cuda-device 0 -s 2
 ./build/btc_bench --cuda --cuda-device 0 -s 10
 ./build/btc_stratum --no-cpu --cuda --cuda-device 0
 ./build/btc_stratum --cuda-self-test --cuda-device 0

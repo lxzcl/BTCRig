@@ -43,6 +43,7 @@ BTCRig 是一个跨平台 C 项目，提供 SHA256d 基准、Stratum V1 挖矿�
 ./build/btc_bench -t "$(nproc)" -s 10
 ./build/btc_bench --opencl --opencl-platform 0 --opencl-device 0 -s 10
 ./build/btc_bench --cuda --cuda-device 0 -s 10
+./build/btc_bench --cuda-autotune --cuda-device 0 -s 2
 ```
 
 ## 主要特性
@@ -236,6 +237,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 --opencl-kernel NAME       OpenCL kernel 变体：auto、compact、unrolled、fixed-npi1、fixed-npi2、fixed-npi4 或 register-heavy
 --opencl-self-test         不连接矿池，验证编译后的 OpenCL kernel
 --cuda                     启用 CUDA worker
+--cuda-autotune            不连接矿池，测试 CUDA batch/block/npt 候选参数
 --cuda-device N            CUDA 设备编号
 --cuda-batch N             每次 CUDA 调度扫描的 nonce 数
 --cuda-block N             CUDA threads per block
@@ -350,6 +352,7 @@ CUDA 可以通过 `config.json` 或命令行启用：
 
 ```bash
 ./build/btc_bench --cuda-info
+./build/btc_bench --cuda-autotune --cuda-device 0 -s 2
 ./build/btc_bench --cuda --cuda-device 0 -s 10
 ./build/btc_stratum --no-cpu --cuda --cuda-device 0
 ./build/btc_stratum --cuda-self-test --cuda-device 0

@@ -306,7 +306,7 @@ static void usage(const char *argv0) {
             "       [--opencl] [--opencl-self-test] [--opencl-platform N] [--opencl-device N]\n"
             "       [--opencl-batch N] [--opencl-local N] [--opencl-npi N]\n"
             "       [--opencl-backend auto|compat10|modern] [--opencl-kernel auto|compact|unrolled|fixed-npi1|fixed-npi2|fixed-npi4|register-heavy]\n"
-            "       [--all] [--cpu-info] [--cuda-info] [--cuda] [--cuda-self-test]\n"
+            "       [--all] [--cpu-info] [--cuda-info] [--cuda] [--cuda-autotune] [--cuda-self-test]\n"
             "       [--cuda-device N] [--cuda-batch N] [--cuda-block N] [--cuda-npt N] [--version]\n",
             argv0);
 }
@@ -461,6 +461,20 @@ static int run_opencl_bench(int seconds, const miner_opencl_config_t *config) {
 #endif
 
 #if defined(BTC_MINER_CUDA)
+typedef struct {
+    uint64_t hashes;
+    double elapsed;
+    double rate;
+    uint8_t sink;
+    char device_name[128];
+    int compute_major;
+    int compute_minor;
+    int driver_version;
+    uint32_t batch_size;
+    uint32_t threads_per_block;
+    uint32_t nonces_per_thread;
+} cuda_bench_result_t;
+
 static int run_cuda_self_test_command(const miner_cuda_config_t *config) {
     cuda_self_test_result_t result;
     char error[512];
@@ -481,15 +495,11 @@ static int run_cuda_self_test_command(const miner_cuda_config_t *config) {
     return 0;
 }
 
-static int run_cuda_bench(int seconds, const miner_cuda_config_t *config) {
+static int run_cuda_measure(int seconds,
+                            const miner_cuda_config_t *config,
+                            cuda_bench_result_t *result) {
     char error[512];
     error[0] = '\0';
-
-    if (cuda_miner_self_test(config, NULL, error, sizeof(error)) != 0) {
-        fprintf(stderr, "%s[CUDA]%s self-test failed: %s\n",
-                C_BRIGHT_RED, C_RESET, error[0] != '\0' ? error : "unknown error");
-        return 1;
-    }
 
     cuda_miner_t *miner = cuda_miner_create(config, error, sizeof(error));
     if (miner == NULL) {
@@ -533,24 +543,322 @@ static int run_cuda_bench(int seconds, const miner_cuda_config_t *config) {
     const double elapsed = monotonic_seconds() - start;
     const double rate = elapsed > 0.0 ? (double)total / elapsed : 0.0;
 
+    if (result != NULL) {
+        memset(result, 0, sizeof(*result));
+        result->hashes = total;
+        result->elapsed = elapsed;
+        result->rate = rate;
+        result->sink = sink;
+        snprintf(result->device_name, sizeof(result->device_name), "%s", cuda_miner_device_name(miner));
+        result->compute_major = cuda_miner_compute_major(miner);
+        result->compute_minor = cuda_miner_compute_minor(miner);
+        result->driver_version = cuda_miner_driver_version(miner);
+        result->batch_size = cuda_miner_batch_size(miner);
+        result->threads_per_block = cuda_miner_threads_per_block(miner);
+        result->nonces_per_thread = cuda_miner_nonces_per_thread(miner);
+    }
+
+    cuda_miner_destroy(miner);
+    return 0;
+}
+
+static int run_cuda_bench(int seconds, const miner_cuda_config_t *config) {
+    char error[512];
+    cuda_bench_result_t result;
+    error[0] = '\0';
+
+    if (cuda_miner_self_test(config, NULL, error, sizeof(error)) != 0) {
+        fprintf(stderr, "%s[CUDA]%s self-test failed: %s\n",
+                C_BRIGHT_RED, C_RESET, error[0] != '\0' ? error : "unknown error");
+        return 1;
+    }
+
+    if (run_cuda_measure(seconds, config, &result) != 0) {
+        return 1;
+    }
+
     printf("%s[BENCH]%s backend=cuda seconds=%d elapsed=%.3f\n",
-           C_BRIGHT_CYAN, C_RESET, seconds, elapsed);
+           C_BRIGHT_CYAN, C_RESET, seconds, result.elapsed);
     printf("%s[BENCH]%s cuda_device=%s compute=sm_%d%d driver=%d batch=%u block=%u npt=%u\n",
            C_BRIGHT_CYAN,
            C_RESET,
-           cuda_miner_device_name(miner),
-           cuda_miner_compute_major(miner),
-           cuda_miner_compute_minor(miner),
-           cuda_miner_driver_version(miner),
-           cuda_miner_batch_size(miner),
-           cuda_miner_threads_per_block(miner),
-           cuda_miner_nonces_per_thread(miner));
+           result.device_name,
+           result.compute_major,
+           result.compute_minor,
+           result.driver_version,
+           result.batch_size,
+           result.threads_per_block,
+           result.nonces_per_thread);
     printf("%s[BENCH]%s sha256d_midstate_hashes=%" PRIu64 " rate=%s%.3f MH/s%s sink=%02x\n",
-           C_BRIGHT_CYAN, C_RESET, total, C_BRIGHT_GREEN, rate / 1000000.0, C_RESET, sink);
+           C_BRIGHT_CYAN,
+           C_RESET,
+           result.hashes,
+           C_BRIGHT_GREEN,
+           result.rate / 1000000.0,
+           C_RESET,
+           result.sink);
     printf("%s[BENCH]%s note=CUDA uses the NVIDIA driver API and embedded PTX\n",
            C_GRAY, C_RESET);
 
-    cuda_miner_destroy(miner);
+    return 0;
+}
+
+static int value_seen_u32(const uint32_t *values, int count, uint32_t value) {
+    for (int i = 0; i < count; ++i) {
+        if (values[i] == value) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static uint32_t cuda_autotune_block_value(uint32_t value) {
+    if (value == 0U) {
+        value = MINER_CUDA_DEFAULT_THREADS_PER_BLOCK;
+    }
+    if (value < 32U) {
+        value = 32U;
+    }
+    if (value > 1024U) {
+        value = 1024U;
+    }
+    return (value + 31U) & ~31U;
+}
+
+static uint32_t cuda_autotune_npt_value(uint32_t value) {
+    if (value == 0U) {
+        value = MINER_CUDA_DEFAULT_NONCES_PER_THREAD;
+    }
+    if (value < 1U) {
+        value = 1U;
+    }
+    if (value > 16U) {
+        value = 16U;
+    }
+    return value;
+}
+
+static uint32_t cuda_autotune_batch_value(uint32_t value) {
+    if (value == 0U) {
+        value = MINER_CUDA_DEFAULT_BATCH_SIZE;
+    }
+    return value < 1024U ? 1024U : value;
+}
+
+static int cuda_autotune_hashrate_is_better(double candidate, double best) {
+    const double threshold = 1.02;
+
+    if (best <= 0.0) {
+        return 1;
+    }
+    return candidate > best * threshold;
+}
+
+static int cuda_autotune_batch_is_better(double candidate, double best) {
+    const double threshold = 1.01;
+
+    if (best <= 0.0) {
+        return 1;
+    }
+    return candidate > best * threshold;
+}
+
+static void print_cuda_autotune_result(const char *label,
+                                       const miner_cuda_config_t *config,
+                                       const cuda_bench_result_t *result) {
+    printf("%s[AUTOTUNE]%s %s device=%d batch=%u block=%u npt=%u rate=%s%.3f MH/s%s elapsed=%.3f hashes=%" PRIu64 "\n",
+           C_CYAN,
+           C_RESET,
+           label,
+           config->device,
+           result->batch_size,
+           result->threads_per_block,
+           result->nonces_per_thread,
+           C_BRIGHT_GREEN,
+           result->rate / 1000000.0,
+           C_RESET,
+           result->elapsed,
+           result->hashes);
+}
+
+static int run_cuda_autotune(int seconds, const miner_cuda_config_t *config) {
+    miner_cuda_config_t base;
+    miner_cuda_config_t best;
+    cuda_bench_result_t best_result;
+    char error[512];
+    int best_ok = 0;
+
+    miner_cuda_config_defaults(&base);
+    if (config != NULL) {
+        base = *config;
+    }
+    base.batch_size = cuda_autotune_batch_value(base.batch_size);
+    base.threads_per_block = cuda_autotune_block_value(base.threads_per_block);
+    base.nonces_per_thread = cuda_autotune_npt_value(base.nonces_per_thread);
+
+    error[0] = '\0';
+    if (cuda_miner_self_test(&base, NULL, error, sizeof(error)) != 0) {
+        fprintf(stderr, "%s[CUDA]%s self-test failed: %s\n",
+                C_BRIGHT_RED, C_RESET, error[0] != '\0' ? error : "unknown error");
+        return 1;
+    }
+
+    printf("%s[AUTOTUNE]%s cuda seconds=%d device=%d\n",
+           C_BRIGHT_CYAN,
+           C_RESET,
+           seconds,
+           base.device);
+    printf("%s[AUTOTUNE]%s selection thresholds: block/npt=2%% batch=1%%\n",
+           C_GRAY,
+           C_RESET);
+    printf("%s[AUTOTUNE]%s warming device=%d batch=%u block=%u npt=%u\n",
+           C_CYAN,
+           C_RESET,
+           base.device,
+           base.batch_size,
+           base.threads_per_block,
+           base.nonces_per_thread);
+    (void)run_cuda_measure(seconds, &base, NULL);
+
+    const uint32_t block_candidates_raw[] = {
+        base.threads_per_block,
+        MINER_CUDA_DEFAULT_THREADS_PER_BLOCK,
+        128U,
+        256U,
+        512U,
+    };
+    const uint32_t npt_candidates_raw[] = {
+        base.nonces_per_thread,
+        MINER_CUDA_DEFAULT_NONCES_PER_THREAD,
+        1U,
+        2U,
+        4U,
+    };
+    const uint32_t batch_candidates_raw[] = {
+        base.batch_size,
+        MINER_CUDA_DEFAULT_BATCH_SIZE,
+        1048576U,
+        2097152U,
+        4194304U,
+        8388608U,
+        16777216U,
+    };
+    uint32_t block_candidates[sizeof(block_candidates_raw) / sizeof(block_candidates_raw[0])];
+    uint32_t npt_candidates[sizeof(npt_candidates_raw) / sizeof(npt_candidates_raw[0])];
+    uint32_t batch_candidates[sizeof(batch_candidates_raw) / sizeof(batch_candidates_raw[0])];
+    int block_count = 0;
+    int npt_count = 0;
+    int batch_count = 0;
+
+    for (size_t i = 0; i < sizeof(block_candidates_raw) / sizeof(block_candidates_raw[0]); ++i) {
+        uint32_t value = cuda_autotune_block_value(block_candidates_raw[i]);
+        if (!value_seen_u32(block_candidates, block_count, value)) {
+            block_candidates[block_count++] = value;
+        }
+    }
+    for (size_t i = 0; i < sizeof(npt_candidates_raw) / sizeof(npt_candidates_raw[0]); ++i) {
+        uint32_t value = cuda_autotune_npt_value(npt_candidates_raw[i]);
+        if (!value_seen_u32(npt_candidates, npt_count, value)) {
+            npt_candidates[npt_count++] = value;
+        }
+    }
+    for (size_t i = 0; i < sizeof(batch_candidates_raw) / sizeof(batch_candidates_raw[0]); ++i) {
+        uint32_t value = cuda_autotune_batch_value(batch_candidates_raw[i]);
+        if (!value_seen_u32(batch_candidates, batch_count, value)) {
+            batch_candidates[batch_count++] = value;
+        }
+    }
+
+    best = base;
+    memset(&best_result, 0, sizeof(best_result));
+
+    printf("%s[AUTOTUNE]%s tuning CUDA block/npt\n", C_BRIGHT_CYAN, C_RESET);
+    for (int bi = 0; bi < block_count; ++bi) {
+        for (int ni = 0; ni < npt_count; ++ni) {
+            miner_cuda_config_t candidate = base;
+            cuda_bench_result_t result;
+
+            candidate.threads_per_block = block_candidates[bi];
+            candidate.nonces_per_thread = npt_candidates[ni];
+            printf("%s[AUTOTUNE]%s testing device=%d batch=%u block=%u npt=%u\n",
+                   C_CYAN,
+                   C_RESET,
+                   candidate.device,
+                   candidate.batch_size,
+                   candidate.threads_per_block,
+                   candidate.nonces_per_thread);
+            if (run_cuda_measure(seconds, &candidate, &result) != 0) {
+                printf("%s[AUTOTUNE]%s unavailable device=%d batch=%u block=%u npt=%u\n",
+                       C_YELLOW,
+                       C_RESET,
+                       candidate.device,
+                       candidate.batch_size,
+                       candidate.threads_per_block,
+                       candidate.nonces_per_thread);
+                continue;
+            }
+            print_cuda_autotune_result("result", &candidate, &result);
+            if (!best_ok || cuda_autotune_hashrate_is_better(result.rate, best_result.rate)) {
+                best_ok = 1;
+                best = candidate;
+                best_result = result;
+            }
+        }
+    }
+
+    if (!best_ok) {
+        fprintf(stderr, "%s[AUTOTUNE]%s no working CUDA parameter set found\n", C_BRIGHT_RED, C_RESET);
+        return 1;
+    }
+
+    printf("%s[AUTOTUNE]%s tuning CUDA batch-size\n", C_BRIGHT_CYAN, C_RESET);
+    for (int bi = 0; bi < batch_count; ++bi) {
+        miner_cuda_config_t candidate = best;
+        cuda_bench_result_t result;
+
+        candidate.batch_size = batch_candidates[bi];
+        printf("%s[AUTOTUNE]%s testing device=%d batch=%u block=%u npt=%u\n",
+               C_CYAN,
+               C_RESET,
+               candidate.device,
+               candidate.batch_size,
+               candidate.threads_per_block,
+               candidate.nonces_per_thread);
+        if (run_cuda_measure(seconds, &candidate, &result) != 0) {
+            printf("%s[AUTOTUNE]%s unavailable device=%d batch=%u block=%u npt=%u\n",
+                   C_YELLOW,
+                   C_RESET,
+                   candidate.device,
+                   candidate.batch_size,
+                   candidate.threads_per_block,
+                   candidate.nonces_per_thread);
+            continue;
+        }
+        print_cuda_autotune_result("result", &candidate, &result);
+        if (cuda_autotune_batch_is_better(result.rate, best_result.rate)) {
+            best = candidate;
+            best_result = result;
+        }
+    }
+
+    printf("%s[AUTOTUNE]%s selected device=%d batch=%u block=%u npt=%u rate=%s%.3f MH/s%s\n",
+           C_BRIGHT_GREEN,
+           C_RESET,
+           best.device,
+           best.batch_size,
+           best.threads_per_block,
+           best.nonces_per_thread,
+           C_BRIGHT_GREEN,
+           best_result.rate / 1000000.0,
+           C_RESET);
+    printf("%s[AUTOTUNE]%s command: --cuda --cuda-device %d --cuda-batch %u --cuda-block %u --cuda-npt %u -s %d\n",
+           C_BRIGHT_CYAN,
+           C_RESET,
+           best.device,
+           best.batch_size,
+           best.threads_per_block,
+           best.nonces_per_thread,
+           seconds);
     return 0;
 }
 #endif
@@ -563,9 +871,12 @@ int main(int argc, char **argv) {
     int run_opencl = 0;
     int run_opencl_self_test = 0;
 #endif
+#if defined(BTC_MINER_CUDA)
     int run_cuda = 0;
     int run_cuda_info = 0;
+    int run_cuda_autotune_flag = 0;
     int run_cuda_self_test = 0;
+#endif
     sha256d_backend_t backend = SHA256D_BACKEND_OPENSSL;
 #if defined(BTC_MINER_OPENCL)
     miner_opencl_config_t opencl_config;
@@ -663,6 +974,8 @@ int main(int argc, char **argv) {
             run_cuda_info = 1;
         } else if (strcmp(argv[i], "--cuda") == 0) {
             run_cuda = 1;
+        } else if (strcmp(argv[i], "--cuda-autotune") == 0) {
+            run_cuda_autotune_flag = 1;
         } else if (strcmp(argv[i], "--cuda-self-test") == 0) {
             run_cuda_self_test = 1;
         } else if (strcmp(argv[i], "--cuda-device") == 0 && i + 1 < argc) {
@@ -676,6 +989,7 @@ int main(int argc, char **argv) {
 #else
         } else if (strcmp(argv[i], "--cuda-info") == 0 ||
                    strcmp(argv[i], "--cuda") == 0 ||
+                   strcmp(argv[i], "--cuda-autotune") == 0 ||
                    strcmp(argv[i], "--cuda-self-test") == 0 ||
                    strcmp(argv[i], "--cuda-device") == 0 ||
                    strcmp(argv[i], "--cuda-batch") == 0 ||
@@ -711,6 +1025,9 @@ int main(int argc, char **argv) {
     }
     if (run_cuda_self_test) {
         return run_cuda_self_test_command(&cuda_config);
+    }
+    if (run_cuda_autotune_flag) {
+        return run_cuda_autotune(seconds, &cuda_config);
     }
     if (run_cuda) {
         return run_cuda_bench(seconds, &cuda_config);
