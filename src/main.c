@@ -305,6 +305,9 @@ static int parse_cuda_kernel_variant(const char *value, int fallback) {
     if (strcmp(value, "fixed-npt4") == 0 || strcmp(value, "fixed_npt4") == 0) {
         return MINER_CUDA_KERNEL_FIXED_NPT4;
     }
+    if (strcmp(value, "lop3") == 0 || strcmp(value, "standard-lop3") == 0 || strcmp(value, "standard_lop3") == 0) {
+        return MINER_CUDA_KERNEL_LOP3;
+    }
     return fallback;
 }
 #endif
@@ -329,7 +332,7 @@ static void usage(const char *argv0) {
             "       [--opencl-backend auto|compat10|modern] [--opencl-kernel auto|compact|unrolled|fixed-npi1|fixed-npi2|fixed-npi4|register-heavy]\n"
             "       [--all] [--cpu-info] [--cuda-info] [--cuda] [--cuda-autotune] [--cuda-self-test]\n"
             "       [--cuda-device N] [--cuda-batch N] [--cuda-block N] [--cuda-npt N]\n"
-            "       [--cuda-kernel standard|dual|fixed-npt1|fixed-npt2|fixed-npt4]\n"
+            "       [--cuda-kernel standard|dual|fixed-npt1|fixed-npt2|fixed-npt4|lop3]\n"
             "       [--version]\n",
             argv0);
 }
@@ -783,6 +786,7 @@ static int run_cuda_autotune(int seconds, const miner_cuda_config_t *config) {
         MINER_CUDA_KERNEL_FIXED_NPT1,
         MINER_CUDA_KERNEL_FIXED_NPT2,
         MINER_CUDA_KERNEL_FIXED_NPT4,
+        MINER_CUDA_KERNEL_LOP3,
     };
     const uint32_t npt_candidates_raw[] = {
         base.nonces_per_thread,
@@ -1070,7 +1074,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--cuda-kernel") == 0 && i + 1 < argc) {
             int parsed = parse_cuda_kernel_variant(argv[++i], -1);
             if (parsed < 0) {
-                fprintf(stderr, "invalid --cuda-kernel, use standard, dual, fixed-npt1, fixed-npt2, or fixed-npt4\n");
+                fprintf(stderr, "invalid --cuda-kernel, use standard, dual, fixed-npt1, fixed-npt2, fixed-npt4, or lop3\n");
                 return 2;
             }
             cuda_config.kernel_variant = parsed;

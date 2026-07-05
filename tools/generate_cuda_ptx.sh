@@ -10,6 +10,11 @@ out="$root_dir/src/cuda_sha256d_ptx.h"
 clang++ -x cuda --cuda-gpu-arch="$arch" -S --cuda-device-only \
     -nocudainc -nocudalib -O3 "$src" -o "$ptx"
 
+if grep -q 'lop3\.b32' "$ptx"; then
+    awk 'BEGIN { done = 0 } !done && $0 == ".version 4.2" { print ".version 5.0"; done = 1; next } { print }' "$ptx" > "$ptx.tmp"
+    mv "$ptx.tmp" "$ptx"
+fi
+
 {
     printf '#ifndef BTCRIG_CUDA_SHA256D_PTX_H\n'
     printf '#define BTCRIG_CUDA_SHA256D_PTX_H\n\n'

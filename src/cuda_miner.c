@@ -248,6 +248,8 @@ const char *cuda_miner_kernel_variant_name(int variant) {
         return "fixed-npt2";
     case MINER_CUDA_KERNEL_FIXED_NPT4:
         return "fixed-npt4";
+    case MINER_CUDA_KERNEL_LOP3:
+        return "lop3";
     case MINER_CUDA_KERNEL_DUAL:
         return "dual";
     case MINER_CUDA_KERNEL_STANDARD:
@@ -264,6 +266,8 @@ static const char *cuda_miner_kernel_function_name(int variant) {
         return "btcrig_cuda_scan_nonce_range_fixed_npt2";
     case MINER_CUDA_KERNEL_FIXED_NPT4:
         return "btcrig_cuda_scan_nonce_range_fixed_npt4";
+    case MINER_CUDA_KERNEL_LOP3:
+        return "btcrig_cuda_scan_nonce_range_lop3";
     case MINER_CUDA_KERNEL_DUAL:
         return "btcrig_cuda_scan_nonce_range_dual";
     case MINER_CUDA_KERNEL_STANDARD:

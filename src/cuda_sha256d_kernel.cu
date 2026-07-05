@@ -37,6 +37,18 @@ CUDA_DEVICE_INLINE u32 bswap32(u32 v) {
            ((v & 0xff000000U) >> 24);
 }
 
+CUDA_DEVICE_INLINE u32 ch_lop3(u32 x, u32 y, u32 z) {
+    u32 out;
+    asm volatile("lop3.b32 %0, %1, %2, %3, 0xca;" : "=r"(out) : "r"(x), "r"(y), "r"(z));
+    return out;
+}
+
+CUDA_DEVICE_INLINE u32 maj_lop3(u32 x, u32 y, u32 z) {
+    u32 out;
+    asm volatile("lop3.b32 %0, %1, %2, %3, 0xe8;" : "=r"(out) : "r"(x), "r"(y), "r"(z));
+    return out;
+}
+
 #define SS0(x) (rotr32((x), 7) ^ rotr32((x), 18) ^ ((x) >> 3))
 #define SS1(x) (rotr32((x), 17) ^ rotr32((x), 19) ^ ((x) >> 10))
 #define BS0(x) (rotr32((x), 2) ^ rotr32((x), 13) ^ rotr32((x), 22))
@@ -319,6 +331,49 @@ CUDA_DEVICE_INLINE void scan_two_nonces(u32 fast0, u32 fast1, u32 fast2, u32 fas
     }
 }
 
+#undef CH
+#undef MAJ
+#define CH(x,y,z) ch_lop3((x), (y), (z))
+#define MAJ(x,y,z) maj_lop3((x), (y), (z))
+
+CUDA_DEVICE_INLINE void scan_one_nonce_lop3(u32 fast0, u32 fast1, u32 fast2, u32 fast3,
+                                            u32 fast4, u32 fast5, u32 fast6, u32 fast7,
+                                            u32 target0, u32 target1, u32 target2, u32 target3,
+                                            u32 target4, u32 target5, u32 target6, u32 target7,
+                                            u32 tail0, u32 tail1, u32 tail2, u32 nonce,
+                                            u32 max_results,
+                                            u32 *result_count,
+                                            u32 *matches) {
+    u32 s0=fast0, s1=fast1, s2=fast2, s3=fast3;
+    u32 s4=fast4, s5=fast5, s6=fast6, s7=fast7;
+    u32 w0=tail0, w1=tail1, w2=tail2, w3=bswap32(nonce);
+    u32 w4=0x80000000U, w5=0U, w6=0U, w7=0U;
+    u32 w8=0U, w9=0U, w10=0U, w11=0U;
+    u32 w12=0U, w13=0U, w14=0U, w15=640U;
+
+    SHA256_COMPRESS(s0,s1,s2,s3,s4,s5,s6,s7,
+                    w0,w1,w2,w3,w4,w5,w6,w7,w8,w9,w10,w11,w12,w13,w14,w15);
+
+    u32 h0=0x6a09e667U, h1=0xbb67ae85U, h2=0x3c6ef372U, h3=0xa54ff53aU;
+    u32 h4=0x510e527fU, h5=0x9b05688cU, h6=0x1f83d9abU, h7=0x5be0cd19U;
+    w0=s0; w1=s1; w2=s2; w3=s3; w4=s4; w5=s5; w6=s6; w7=s7;
+    w8=0x80000000U; w9=0U; w10=0U; w11=0U;
+    w12=0U; w13=0U; w14=0U; w15=256U;
+
+    SHA256_COMPRESS(h0,h1,h2,h3,h4,h5,h6,h7,
+                    w0,w1,w2,w3,w4,w5,w6,w7,w8,w9,w10,w11,w12,w13,w14,w15);
+
+    if (meets_target_words(h0,h1,h2,h3,h4,h5,h6,h7,
+                           target0,target1,target2,target3,target4,target5,target6,target7)) {
+        store_match_words(nonce,h0,h1,h2,h3,h4,h5,h6,h7,max_results,result_count,matches);
+    }
+}
+
+#undef CH
+#undef MAJ
+#define CH(x,y,z) (((x) & (y)) ^ (~(x) & (z)))
+#define MAJ(x,y,z) (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))
+
 extern "C" __attribute__((global)) void btcrig_cuda_scan_nonce_range_dual(
     u32 fast0, u32 fast1, u32 fast2, u32 fast3,
     u32 fast4, u32 fast5, u32 fast6, u32 fast7,
@@ -435,6 +490,34 @@ extern "C" __attribute__((global)) void btcrig_cuda_scan_nonce_range_fixed_npt4(
                        target0, target1, target2, target3, target4, target5, target6, target7,
                        tail0, tail1, tail2, start_nonce + base_nonce + item,
                        max_results, result_count, matches);
+    }
+}
+
+extern "C" __attribute__((global)) void btcrig_cuda_scan_nonce_range_lop3(
+    u32 fast0, u32 fast1, u32 fast2, u32 fast3,
+    u32 fast4, u32 fast5, u32 fast6, u32 fast7,
+    u32 target0, u32 target1, u32 target2, u32 target3,
+    u32 target4, u32 target5, u32 target6, u32 target7,
+    u32 tail0, u32 tail1, u32 tail2,
+    u32 start_nonce, u32 nonce_count,
+    u32 nonces_per_thread,
+    u32 max_results,
+    u32 *result_count,
+    u32 *matches) {
+    u32 gid = cuda_ctaid_x() * cuda_ntid_x() + cuda_tid_x();
+    u32 base_nonce = gid * nonces_per_thread;
+    if (base_nonce >= nonce_count) {
+        return;
+    }
+    u32 limit = nonces_per_thread;
+    if (base_nonce + limit > nonce_count) {
+        limit = nonce_count - base_nonce;
+    }
+    for (u32 item = 0U; item < limit; ++item) {
+        scan_one_nonce_lop3(fast0, fast1, fast2, fast3, fast4, fast5, fast6, fast7,
+                            target0, target1, target2, target3, target4, target5, target6, target7,
+                            tail0, tail1, tail2, start_nonce + base_nonce + item,
+                            max_results, result_count, matches);
     }
 }
 

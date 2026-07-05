@@ -50,7 +50,7 @@ Run the same local benchmark when comparing builds:
 
 - Automatic backend selection: x86 SHA-NI, ARMv8 SHA2, OpenSSL, or portable C.
 - Optional OpenCL GPU path with compat10 fallback and OpenCL 1.2+ modern fixed-npi/register-heavy candidates; disabled by default at runtime.
-- Optional CUDA GPU path using the NVIDIA driver API and embedded PTX, with standard, dual nonce, and fixed-npt kernel variants; disabled by default at runtime and does not require the CUDA Toolkit on the target machine.
+- Optional CUDA GPU path using the NVIDIA driver API and embedded PTX, with standard, dual nonce, fixed-npt, and lop3 kernel variants; disabled by default at runtime and does not require the CUDA Toolkit on the target machine.
 - Mixed CPU/GPU nonce scheduler: GPU workers keep large dispatch batches while CPU workers use smaller chunks for faster job turnover.
 - Two-lane interleaved x86 SHA-NI scanning and dedicated ARMv8 SHA2 range scanning.
 - Uses every logical CPU by default; thread count remains configurable.
@@ -242,7 +242,7 @@ Common commands:
 --cuda-batch N             nonce batch size per CUDA dispatch
 --cuda-block N             CUDA threads per block
 --cuda-npt N               nonces scanned by each CUDA thread
---cuda-kernel NAME         CUDA kernel variant: standard, dual, fixed-npt1, fixed-npt2, or fixed-npt4
+--cuda-kernel NAME         CUDA kernel variant: standard, dual, fixed-npt1, fixed-npt2, fixed-npt4, or lop3
 --cuda-self-test           verify the embedded CUDA PTX without connecting to a pool
 --autotune                 force first-run CPU/GPU benchmark and update config
 --no-autotune              skip automatic first-run benchmark
@@ -356,13 +356,14 @@ CUDA can be enabled from `config.json` or from the command line:
 ./build/btc_bench --cuda-info
 ./build/btc_bench --cuda-autotune --cuda-device 0 -s 2
 ./build/btc_bench --cuda --cuda-device 0 -s 10
+./build/btc_bench --cuda --cuda-device 0 --cuda-kernel lop3 -s 10
 ./build/btc_bench --cuda --cuda-device 0 --cuda-kernel fixed-npt1 -s 10
 ./build/btc_bench --cuda --cuda-device 0 --cuda-kernel dual --cuda-npt 2 -s 10
 ./build/btc_stratum --no-cpu --cuda --cuda-device 0
 ./build/btc_stratum --cuda-self-test --cuda-device 0
 ```
 
-`cuda.kernel` accepts `standard`, `dual`, `fixed-npt1`, `fixed-npt2`, or `fixed-npt4`. The default is `standard`; `--cuda-autotune` tests the available variants and keeps the fastest stable result for the selected GPU. Fixed-npt kernels force their matching `nonces-per-thread` value at runtime.
+`cuda.kernel` accepts `standard`, `dual`, `fixed-npt1`, `fixed-npt2`, `fixed-npt4`, or `lop3`. The default is `standard`; `--cuda-autotune` tests the available variants and keeps the fastest stable result for the selected GPU. Fixed-npt kernels force their matching `nonces-per-thread` value at runtime, while `lop3` uses inline PTX ternary-logic instructions for SHA256 `CH` and `MAJ`.
 
 Multiple OpenCL GPUs can be selected explicitly:
 

@@ -498,6 +498,11 @@ static int parse_cuda_kernel_variant(const char *value, int fallback) {
         string_equals_ci(value, "fixed_npt4")) {
         return MINER_CUDA_KERNEL_FIXED_NPT4;
     }
+    if (string_equals_ci(value, "lop3") ||
+        string_equals_ci(value, "standard-lop3") ||
+        string_equals_ci(value, "standard_lop3")) {
+        return MINER_CUDA_KERNEL_LOP3;
+    }
     return fallback;
 }
 
@@ -509,6 +514,8 @@ static const char *cuda_kernel_variant_name(int variant) {
         return "fixed-npt2";
     case MINER_CUDA_KERNEL_FIXED_NPT4:
         return "fixed-npt4";
+    case MINER_CUDA_KERNEL_LOP3:
+        return "lop3";
     case MINER_CUDA_KERNEL_DUAL:
         return "dual";
     case MINER_CUDA_KERNEL_STANDARD:
@@ -1296,6 +1303,7 @@ static void autotune_cuda_params(miner_cuda_config_t *config, double seconds) {
         MINER_CUDA_KERNEL_FIXED_NPT1,
         MINER_CUDA_KERNEL_FIXED_NPT2,
         MINER_CUDA_KERNEL_FIXED_NPT4,
+        MINER_CUDA_KERNEL_LOP3,
     };
     uint32_t block_candidates[sizeof(block_candidates_raw) / sizeof(block_candidates_raw[0])];
     uint32_t npt_candidates[sizeof(npt_candidates_raw) / sizeof(npt_candidates_raw[0])];
@@ -1980,7 +1988,7 @@ static void usage(const char *argv0) {
     printf("     [--opencl-batch N] [--opencl-local N] [--opencl-npi N]\n");
     printf("     [--opencl-backend auto|compat10|modern] [--opencl-kernel auto|compact|unrolled|fixed-npi1|fixed-npi2|fixed-npi4|register-heavy]\n");
     printf("     [--cuda] [--cuda-device N] [--cuda-batch N] [--cuda-block N] [--cuda-npt N]\n");
-    printf("     [--cuda-kernel standard|dual|fixed-npt1|fixed-npt2|fixed-npt4]\n");
+    printf("     [--cuda-kernel standard|dual|fixed-npt1|fixed-npt2|fixed-npt4|lop3]\n");
     printf("     [--autotune] [--no-autotune] [--autotune-seconds N]\n");
     printf("\nDefaults:\n");
     printf("  version: %s\n", BTCRIG_VERSION_TAG);
@@ -2207,7 +2215,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--cuda-kernel") == 0 && i + 1 < argc) {
             int parsed = parse_cuda_kernel_variant(argv[++i], -1);
             if (parsed < 0) {
-                fprintf(stderr, "%s[CONFIG]%s invalid --cuda-kernel, use standard, dual, fixed-npt1, fixed-npt2, or fixed-npt4\n",
+                fprintf(stderr, "%s[CONFIG]%s invalid --cuda-kernel, use standard, dual, fixed-npt1, fixed-npt2, fixed-npt4, or lop3\n",
                         C_BRIGHT_RED,
                         C_RESET);
                 return 2;
