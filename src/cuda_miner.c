@@ -230,10 +230,13 @@ static int normalize_kernel_variant(int value) {
 static uint32_t kernel_variant_forced_npt(int variant) {
     switch (normalize_kernel_variant(variant)) {
     case MINER_CUDA_KERNEL_FIXED_NPT1:
+    case MINER_CUDA_KERNEL_FIXED_LOP3_NPT1:
         return 1U;
     case MINER_CUDA_KERNEL_FIXED_NPT2:
+    case MINER_CUDA_KERNEL_FIXED_LOP3_NPT2:
         return 2U;
     case MINER_CUDA_KERNEL_FIXED_NPT4:
+    case MINER_CUDA_KERNEL_FIXED_LOP3_NPT4:
         return 4U;
     default:
         return 0U;
@@ -250,6 +253,12 @@ const char *cuda_miner_kernel_variant_name(int variant) {
         return "fixed-npt4";
     case MINER_CUDA_KERNEL_LOP3:
         return "lop3";
+    case MINER_CUDA_KERNEL_FIXED_LOP3_NPT1:
+        return "fixed-lop3-npt1";
+    case MINER_CUDA_KERNEL_FIXED_LOP3_NPT2:
+        return "fixed-lop3-npt2";
+    case MINER_CUDA_KERNEL_FIXED_LOP3_NPT4:
+        return "fixed-lop3-npt4";
     case MINER_CUDA_KERNEL_DUAL:
         return "dual";
     case MINER_CUDA_KERNEL_STANDARD:
@@ -268,6 +277,12 @@ static const char *cuda_miner_kernel_function_name(int variant) {
         return "btcrig_cuda_scan_nonce_range_fixed_npt4";
     case MINER_CUDA_KERNEL_LOP3:
         return "btcrig_cuda_scan_nonce_range_lop3";
+    case MINER_CUDA_KERNEL_FIXED_LOP3_NPT1:
+        return "btcrig_cuda_scan_nonce_range_fixed_lop3_npt1";
+    case MINER_CUDA_KERNEL_FIXED_LOP3_NPT2:
+        return "btcrig_cuda_scan_nonce_range_fixed_lop3_npt2";
+    case MINER_CUDA_KERNEL_FIXED_LOP3_NPT4:
+        return "btcrig_cuda_scan_nonce_range_fixed_lop3_npt4";
     case MINER_CUDA_KERNEL_DUAL:
         return "btcrig_cuda_scan_nonce_range_dual";
     case MINER_CUDA_KERNEL_STANDARD:
