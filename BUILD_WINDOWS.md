@@ -6,7 +6,7 @@ The full Windows / MSYS2 UCRT64 build and packaging instructions are in [README.
 
 GitHub Actions already builds the Windows UCRT64 package. `dev` builds keep the zip as an Actions artifact, while `master` builds publish the zip directly to GitHub Releases.
 
-Windows builds can include CPU, OpenCL, and CUDA backends. CUDA uses runtime NVIDIA driver loading, so the CUDA Toolkit is not required on the target machine.
+Windows builds can include CPU, OpenCL, and CUDA backends. OpenCL and CUDA use runtime driver loading, so missing GPU runtimes do not stop CPU-only startup.
 
 Quick build:
 
@@ -19,12 +19,11 @@ pacman -S --needed \
   mingw-w64-ucrt-x86_64-pkgconf \
   git make
 
-# Optional OpenCL build support. CMake builds the compat10 GPU backend by default when these are present.
+# Optional OpenCL build support. CMake builds the GPU backend when headers are present.
 pacman -S --needed \
-  mingw-w64-ucrt-x86_64-opencl-headers \
-  mingw-w64-ucrt-x86_64-opencl-icd
+  mingw-w64-ucrt-x86_64-opencl-headers
 
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF
 cmake --build build -j$(nproc)
 ./build/btc_bench.exe --cuda-info
 ./build/btc_bench.exe --cuda-self-test --cuda-device 0
@@ -39,10 +38,10 @@ stratum+tls://public-pool.io:14333
 OpenCL note:
 
 ```text
-OpenCL support is optional at build time. Install a GPU driver with OpenCL
-runtime and OpenCL development headers if you want CMake to compile the
-compat10 OpenCL worker. CPU-only builds are unaffected when OpenCL is not found.
-CUDA support is compiled through runtime driver loading and stays disabled until
+OpenCL support is optional at build time. Install OpenCL development headers if
+you want CMake to compile the OpenCL worker. The OpenCL runtime is loaded only
+when OpenCL is enabled, so CPU-only startup is unaffected when OpenCL.dll is
+missing. CUDA support is compiled through runtime driver loading and stays disabled until
 `cuda.enabled=true` or `--cuda` is used. It requires the NVIDIA display driver
 at runtime, not the CUDA Toolkit.
 On the first normal mining run, `autotune.enabled=true` makes `btc_stratum`

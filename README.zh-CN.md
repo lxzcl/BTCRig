@@ -141,7 +141,7 @@ cmake --build build -j"$(nproc)"
 ./build/btc_stratum --cuda
 ```
 
-`config.json` 默认仍然关闭 OpenCL。`-DBTCRIG_OPENCL=ON` 只表示把 GPU worker 编译进程序；实际运行时需要手动设置 `opencl.enabled=true`，或传入 `--opencl` / `--opencl-all` 才会使用显卡。
+`config.json` 默认仍然关闭 OpenCL。`-DBTCRIG_OPENCL=ON` 只表示把 GPU worker 编译进程序；实际运行时需要手动设置 `opencl.enabled=true`，或传入 `--opencl` / `--opencl-all` 才会使用显卡。OpenCL runtime 会动态加载，所以缺少 `OpenCL.dll` 或 `libOpenCL.so.1` 时仍可正常 CPU-only 启动。
 
 `config.json` 默认也关闭 CUDA。`-DBTCRIG_CUDA=ON` 会编译 CUDA worker 和 `btc_bench --cuda`；运行时只需要 NVIDIA 驱动提供 Windows 上的 `nvcuda.dll` 或 Linux 上的 `libcuda.so.1`。只有需要用 `tools/generate_cuda_ptx.sh` 重新生成 `src/cuda_sha256d_ptx.h` 时，才需要 CUDA Toolkit 或能编译 CUDA device code 的 clang。可以用 `tools/analyze_cuda_ptx.sh sm_86` 查看内嵌 CUDA kernel 的 PTX 级寄存器和指令计数。
 
@@ -166,8 +166,7 @@ pacman -S --needed \
 
 ```bash
 pacman -S --needed \
-  mingw-w64-ucrt-x86_64-opencl-headers \
-  mingw-w64-ucrt-x86_64-opencl-icd
+  mingw-w64-ucrt-x86_64-opencl-headers
 ```
 
 CUDA 运行时不需要额外 MSYS2 包。安装 NVIDIA 显卡驱动后，可以这样验证：
@@ -182,7 +181,7 @@ CUDA 运行时不需要额外 MSYS2 包。安装 NVIDIA 显卡驱动后，可以
 ```bash
 git clone https://github.com/lxzcl/BTCRig.git
 cd BTCRig
-cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF
 cmake --build build -j"$(nproc)"
 ./build/btc_stratum.exe --self-test
 ./build/btc_proxy.exe --version
@@ -317,7 +316,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 
 `diff` 只是初始建议值，实际 share 难度由矿池通过 `mining.set_difficulty` 下发。
 
-OpenCL 和 CUDA 都是运行时可选模块。构建机器如果有 OpenCL 头文件和库，`btc_stratum` 默认会包含 OpenCL worker；如果没有，则跳过这条路径。CUDA 默认通过运行时驱动加载编译进程序，但只有设置 `cuda.enabled=true` 或传入 `--cuda` 才会启用。开启任意 GPU 后端但找不到可用设备时，程序会输出警告，并继续保留 CPU 路径。启用 OpenCL 且没有配置具体设备列表时，会默认使用全部 OpenCL GPU 设备；CUDA 当前使用一张指定的 NVIDIA 设备。
+OpenCL 和 CUDA 都是运行时可选模块。构建机器如果有 OpenCL 头文件，`btc_stratum` 默认会包含 OpenCL worker；如果没有，则跳过这条路径。OpenCL 和 CUDA 都通过运行时驱动加载，只有设置 `opencl.enabled=true`、`cuda.enabled=true`，或传入 `--opencl` / `--cuda` 才会启用。开启任意 GPU 后端但找不到可用设备时，程序会输出警告，并继续保留 CPU 路径。启用 OpenCL 且没有配置具体设备列表时，会默认使用全部 OpenCL GPU 设备；CUDA 当前使用一张指定的 NVIDIA 设备。
 
 CPU、OpenCL 和 CUDA worker 共用一个 nonce 分配器，因此不会扫描重叠 nonce。纯 CPU 模式下 CPU worker 使用较大的 nonce 块；只要存在 GPU worker，CPU worker 会自动切换为较小块，而 GPU worker 继续使用配置中的 `batch-size`。新 job、暂停/恢复和停止会直接唤醒等待中的 worker，不再只依赖周期性轮询。
 
@@ -333,7 +332,7 @@ CPU、OpenCL 和 CUDA worker 共用一个 nonce 分配器，因此不会扫描�
 | `arm-sha2` | 支持 SHA2 扩展的 ARMv8 CPU | ARM 专用 range scan |
 | `openssl` | 所有支持的平台 | 通用库回退路径 |
 | `fast-c` | 所有支持的平台 | 普通 C 回退路径 |
-| `opencl` | 可选 `btc_stratum` worker | OpenCL GPU worker，包含 `compat10` 兜底和 `modern` OpenCL 1.2+ fixed-npi/register-heavy 候选路径 |
+| `opencl` | 可选 `btc_stratum` worker | 运行时动态加载的 OpenCL GPU worker，包含 `compat10` 兜底和 `modern` OpenCL 1.2+ fixed-npi/register-heavy 候选路径 |
 | `cuda` | 可选 `btc_stratum` worker 和 `btc_bench --cuda` | 通过运行时 CUDA Driver API 加载 NVIDIA GPU 后端，并使用内嵌 PTX |
 
 可以用 `BTC_MINER_SHA_BACKEND` 覆盖自动选择，例如：

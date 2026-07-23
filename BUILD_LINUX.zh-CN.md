@@ -12,7 +12,7 @@ sudo apt install -y build-essential cmake make pkg-config git \
   libssl-dev libjansson-dev ca-certificates wget unzip
 
 # 可选 OpenCL 构建支持。CPU-only 构建不需要它。
-# 安装后 CMake 会默认编译 compat10 GPU 后端。
+# 安装 headers 后 CMake 会编译 GPU 后端。
 sudo apt install -y ocl-icd-opencl-dev opencl-headers clinfo
 
 # CUDA 通过运行时 libcuda 加载；CUDA 主机需要安装 NVIDIA 驱动。
@@ -39,9 +39,9 @@ stratum+tls://public-pool.io:14333
 OpenCL 说明：
 
 ```text
-OpenCL 是构建时可选模块。如果 CMake 找不到 OpenCL，BTCRig 仍会正常构建为
-CPU-only 矿工。CUDA 会从 NVIDIA 驱动动态加载，只有设置 `cuda.enabled=true`
-或传入 `--cuda` 才会启用。第一次正常挖矿启动时，`autotune.enabled=true` 会让
+OpenCL 是构建时可选模块。如果 CMake 找不到 OpenCL headers，BTCRig 仍会正常构建为
+CPU-only 矿工。OpenCL 和 CUDA 都会从 GPU 驱动动态加载，只有设置 `opencl.enabled=true`、
+`cuda.enabled=true`，或传入 `--opencl` / `--cuda` 才会启用。第一次正常挖矿启动时，`autotune.enabled=true` 会让
 `btc_stratum` 离线自检 CPU/GPU 模式，把最快模式和 CPU/GPU 调优完成标记写回
 config.json。可以用 `btc_stratum --opencl-self-test` 或
 `btc_stratum --cuda-self-test` 在不连接矿池的情况下验证 GPU kernel，或用

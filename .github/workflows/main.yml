@@ -55,10 +55,19 @@ jobs:
             pkg-config
 
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON -DBTCRIG_OPENCL=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF -DBTCRIG_OPENCL=ON
 
       - name: Build
         run: cmake --build build --parallel "$(nproc)"
+
+      - name: Smoke test
+        run: |
+          ./build/btc_stratum --version
+          ./build/btc_proxy --version
+          ./build/btc_bench --version
+          ./build/btc_stratum --self-test
+          ! ldd build/btc_stratum | grep -qi "libOpenCL"
+          ! ldd build/btc_bench | grep -qi "libOpenCL"
 
       - name: Package
         run: |
@@ -117,13 +126,21 @@ jobs:
             mingw-w64-ucrt-x86_64-jansson
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-opencl-headers
-            mingw-w64-ucrt-x86_64-opencl-icd
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON -DBTCRIG_OPENCL=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF -DBTCRIG_OPENCL=ON
 
       - name: Build
         run: cmake --build build --parallel "$(nproc)"
+
+      - name: Smoke test
+        run: |
+          ./build/btc_stratum.exe --version
+          ./build/btc_proxy.exe --version
+          ./build/btc_bench.exe --version
+          ./build/btc_stratum.exe --self-test
+          ! objdump -p build/btc_stratum.exe | grep -qi "DLL Name: OpenCL.dll"
+          ! objdump -p build/btc_bench.exe | grep -qi "DLL Name: OpenCL.dll"
 
       - name: Package
         run: |

@@ -141,7 +141,7 @@ cmake --build build -j"$(nproc)"
 ./build/btc_stratum --cuda
 ```
 
-OpenCL is still disabled by default in `config.json`. Building with `-DBTCRIG_OPENCL=ON` only includes the GPU worker; enable it explicitly with `opencl.enabled=true`, `--opencl`, or `--opencl-all`.
+OpenCL is still disabled by default in `config.json`. Building with `-DBTCRIG_OPENCL=ON` only includes the GPU worker; enable it explicitly with `opencl.enabled=true`, `--opencl`, or `--opencl-all`. The OpenCL runtime is loaded dynamically, so CPU-only startup still works when `OpenCL.dll` or `libOpenCL.so.1` is missing.
 
 CUDA is also disabled by default in `config.json`. Building with `-DBTCRIG_CUDA=ON` includes the CUDA worker and `btc_bench --cuda`; runtime only needs an NVIDIA driver that provides `nvcuda.dll` on Windows or `libcuda.so.1` on Linux. The CUDA Toolkit is only needed if you want to regenerate `src/cuda_sha256d_ptx.h` with `tools/generate_cuda_ptx.sh`. Use `tools/analyze_cuda_ptx.sh sm_86` to inspect PTX-level register and instruction counts for the embedded CUDA kernels.
 
@@ -166,8 +166,7 @@ Optional OpenCL build support:
 
 ```bash
 pacman -S --needed \
-  mingw-w64-ucrt-x86_64-opencl-headers \
-  mingw-w64-ucrt-x86_64-opencl-icd
+  mingw-w64-ucrt-x86_64-opencl-headers
 ```
 
 CUDA support does not need extra MSYS2 packages at runtime. Install the NVIDIA display driver, then verify it with:
@@ -182,7 +181,7 @@ If `pacman -Syu` asks you to close the terminal, reopen the UCRT64 terminal befo
 ```bash
 git clone https://github.com/lxzcl/BTCRig.git
 cd BTCRig
-cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=ON
+cmake -S . -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBTC_MINER_NATIVE=OFF
 cmake --build build -j"$(nproc)"
 ./build/btc_stratum.exe --self-test
 ./build/btc_proxy.exe --version
@@ -317,7 +316,7 @@ Interactive keys while mining:
 
 The pool controls the effective share difficulty through `mining.set_difficulty`; `diff` is only an initial suggestion.
 
-OpenCL and CUDA are opt-in at runtime. If the build machine has OpenCL headers and libraries, `btc_stratum` includes the OpenCL worker by default; otherwise that path is skipped. CUDA is compiled by default through runtime driver loading and stays inactive unless `cuda.enabled=true` or `--cuda` is used. Enabling either GPU backend without a usable device prints a warning and keeps the CPU path available. When OpenCL is enabled and no specific device list is configured, all OpenCL GPU devices are used; CUDA currently uses one selected NVIDIA device.
+OpenCL and CUDA are opt-in at runtime. If the build machine has OpenCL headers, `btc_stratum` includes the OpenCL worker by default; otherwise that path is skipped. OpenCL and CUDA are loaded through runtime driver loading and stay inactive unless `opencl.enabled=true`, `cuda.enabled=true`, `--opencl`, or `--cuda` is used. Enabling either GPU backend without a usable device prints a warning and keeps the CPU path available. When OpenCL is enabled and no specific device list is configured, all OpenCL GPU devices are used; CUDA currently uses one selected NVIDIA device.
 
 CPU, OpenCL, and CUDA workers share one nonce allocator, so ranges do not overlap. In CPU-only mode CPU workers use larger nonce chunks; when any GPU worker is active, CPU chunks are reduced while GPU workers keep their configured `batch-size`. New jobs, pause/resume, and shutdown wake waiting workers directly instead of relying on periodic polling.
 
@@ -333,7 +332,7 @@ This deliberately avoids trying every possible CPU/GPU subset. The high-value mo
 | `arm-sha2` | ARMv8 CPU with SHA2 extensions | Dedicated ARM range scanner |
 | `openssl` | All supported builds | Library fallback |
 | `fast-c` | All supported builds | Portable C fallback |
-| `opencl` | Optional `btc_stratum` worker | OpenCL GPU worker with `compat10` fallback and `modern` OpenCL 1.2+ fixed-npi/register-heavy candidate selection |
+| `opencl` | Optional `btc_stratum` worker | Runtime-loaded OpenCL GPU worker with `compat10` fallback and `modern` OpenCL 1.2+ fixed-npi/register-heavy candidate selection |
 | `cuda` | Optional `btc_stratum` worker and `btc_bench --cuda` | NVIDIA GPU worker using runtime CUDA driver loading and embedded PTX |
 
 Override automatic selection with `BTC_MINER_SHA_BACKEND`, for example:
