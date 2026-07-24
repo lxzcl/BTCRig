@@ -72,6 +72,7 @@ jobs:
           ./build/btc_proxy --version
           ./build/btc_bench --version
           ./build/btc_stratum --self-test
+          ctest --test-dir build --output-on-failure
           ! ldd build/btc_stratum | grep -qi "libOpenCL"
           ! ldd build/btc_bench | grep -qi "libOpenCL"
 
@@ -145,6 +146,7 @@ jobs:
           ./build/btc_proxy.exe --version
           ./build/btc_bench.exe --version
           ./build/btc_stratum.exe --self-test
+          ctest --test-dir build --output-on-failure
           ! objdump -p build/btc_stratum.exe | grep -qi "DLL Name: OpenCL.dll"
           ! objdump -p build/btc_bench.exe | grep -qi "DLL Name: OpenCL.dll"
 

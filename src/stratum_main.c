@@ -14,6 +14,9 @@
 #endif
 
 #include <jansson.h>
+#include <errno.h>
+#include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -600,6 +603,56 @@ static uint32_t json_u32_value(json_t *value, uint32_t fallback) {
 
 static double json_number_value_or(json_t *value, double fallback) {
     return json_is_number(value) ? json_number_value(value) : fallback;
+}
+
+static int invalid_option_value(const char *option, const char *text) {
+    fprintf(stderr, "%s[CONFIG]%s invalid %s=%s\n",
+            C_BRIGHT_RED,
+            C_RESET,
+            option,
+            text != NULL ? text : "");
+    return -1;
+}
+
+static int parse_int_option(const char *option, const char *text, long min_value, long max_value, int *out) {
+    char *end = NULL;
+    errno = 0;
+    long value = strtol(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || value < min_value || value > max_value) {
+        return invalid_option_value(option, text);
+    }
+    *out = (int)value;
+    return 0;
+}
+
+static int parse_u32_option(const char *option,
+                            const char *text,
+                            uint32_t min_value,
+                            uint32_t max_value,
+                            uint32_t *out) {
+    if (text == NULL || text[0] == '-') {
+        return invalid_option_value(option, text);
+    }
+
+    char *end = NULL;
+    errno = 0;
+    unsigned long value = strtoul(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || value < min_value || value > max_value) {
+        return invalid_option_value(option, text);
+    }
+    *out = (uint32_t)value;
+    return 0;
+}
+
+static int parse_double_option(const char *option, const char *text, double min_value, double *out) {
+    char *end = NULL;
+    errno = 0;
+    double value = strtod(text, &end);
+    if (errno != 0 || end == text || *end != '\0' || !isfinite(value) || value < min_value) {
+        return invalid_option_value(option, text);
+    }
+    *out = value;
+    return 0;
 }
 
 static json_t *json_load_file_allow_bom(const char *path, json_error_t *error) {
@@ -2154,21 +2207,44 @@ int main(int argc, char **argv) {
         } else if ((strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--pass") == 0) && i + 1 < argc) {
             copy_string(app_config.pools[0].pass, sizeof(app_config.pools[0].pass), argv[++i]);
         } else if ((strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--suggest-diff") == 0) && i + 1 < argc) {
-            app_config.pools[0].difficulty = strtod(argv[++i], NULL);
+            if (parse_double_option(argv[i], argv[i + 1], 0.0, &app_config.pools[0].difficulty) != 0) {
+                return 2;
+            }
+            ++i;
         } else if ((strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--retries") == 0) && i + 1 < argc) {
-            app_config.retries = atoi(argv[++i]);
+            if (parse_int_option(argv[i], argv[i + 1], -1, INT_MAX, &app_config.retries) != 0) {
+                return 2;
+            }
+            ++i;
         } else if ((strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--threads") == 0) && i + 1 < argc) {
-            app_config.thread_count = atoi(argv[++i]);
+            if (parse_int_option(argv[i], argv[i + 1], 0, 1024, &app_config.thread_count) != 0) {
+                return 2;
+            }
+            ++i;
             app_config.cpu_enabled = 1;
             worker_override = 1;
         } else if (strcmp(argv[i], "--runtime") == 0 && i + 1 < argc) {
-            app_config.runtime_seconds = strtod(argv[++i], NULL);
+            if (parse_double_option(argv[i], argv[i + 1], 0.0, &app_config.runtime_seconds) != 0) {
+                return 2;
+            }
+            ++i;
         } else if (strcmp(argv[i], "--stats") == 0 && i + 1 < argc) {
-            app_config.stats_interval = strtod(argv[++i], NULL);
+            if (parse_double_option(argv[i], argv[i + 1], 0.0, &app_config.stats_interval) != 0) {
+                return 2;
+            }
+            ++i;
         } else if (strcmp(argv[i], "--reconnect-delay") == 0 && i + 1 < argc) {
-            app_config.reconnect_delay = atoi(argv[++i]);
+            if (parse_int_option(argv[i], argv[i + 1], 0, INT_MAX, &app_config.reconnect_delay) != 0) {
+                return 2;
+            }
+            ++i;
         } else if (strcmp(argv[i], "--donate-level") == 0 && i + 1 < argc) {
-            app_config_set_donate_level(&app_config, atoi(argv[++i]), "command-line");
+            int donate_level = 0;
+            if (parse_int_option(argv[i], argv[i + 1], 0, 99, &donate_level) != 0) {
+                return 2;
+            }
+            ++i;
+            app_config_set_donate_level(&app_config, donate_level, "command-line");
         } else if (strcmp(argv[i], "--no-mine") == 0) {
             app_config.enable_mining = 0;
         } else if (strcmp(argv[i], "--no-cpu") == 0) {
@@ -2186,23 +2262,38 @@ int main(int argc, char **argv) {
             opencl_self_test = 1;
             app_config.opencl.enabled = 1;
         } else if (strcmp(argv[i], "--opencl-platform") == 0 && i + 1 < argc) {
-            app_config.opencl.platform = atoi(argv[++i]);
+            if (parse_int_option(argv[i], argv[i + 1], 0, INT_MAX, &app_config.opencl.platform) != 0) {
+                return 2;
+            }
+            ++i;
             app_config.opencl.all_devices = 0;
             app_config.opencl.device_count = 0;
             worker_override = 1;
         } else if (strcmp(argv[i], "--opencl-device") == 0 && i + 1 < argc) {
-            app_config.opencl.device = atoi(argv[++i]);
+            if (parse_int_option(argv[i], argv[i + 1], 0, INT_MAX, &app_config.opencl.device) != 0) {
+                return 2;
+            }
+            ++i;
             app_config.opencl.all_devices = 0;
             app_config.opencl.device_count = 0;
             worker_override = 1;
         } else if (strcmp(argv[i], "--opencl-batch") == 0 && i + 1 < argc) {
-            app_config.opencl.batch_size = (uint32_t)strtoul(argv[++i], NULL, 10);
+            if (parse_u32_option(argv[i], argv[i + 1], 0, UINT32_MAX, &app_config.opencl.batch_size) != 0) {
+                return 2;
+            }
+            ++i;
             worker_override = 1;
         } else if (strcmp(argv[i], "--opencl-local") == 0 && i + 1 < argc) {
-            app_config.opencl.local_work_size = (uint32_t)strtoul(argv[++i], NULL, 10);
+            if (parse_u32_option(argv[i], argv[i + 1], 0, UINT32_MAX, &app_config.opencl.local_work_size) != 0) {
+                return 2;
+            }
+            ++i;
             worker_override = 1;
         } else if ((strcmp(argv[i], "--opencl-npi") == 0 || strcmp(argv[i], "--opencl-nonces-per-work-item") == 0) && i + 1 < argc) {
-            app_config.opencl.nonces_per_work_item = (uint32_t)strtoul(argv[++i], NULL, 10);
+            if (parse_u32_option(argv[i], argv[i + 1], 0, UINT32_MAX, &app_config.opencl.nonces_per_work_item) != 0) {
+                return 2;
+            }
+            ++i;
             worker_override = 1;
         } else if (strcmp(argv[i], "--opencl-backend") == 0 && i + 1 < argc) {
             int parsed = parse_opencl_backend_variant(argv[++i], -1);
@@ -2231,16 +2322,28 @@ int main(int argc, char **argv) {
             cuda_self_test = 1;
             app_config.cuda.enabled = 1;
         } else if (strcmp(argv[i], "--cuda-device") == 0 && i + 1 < argc) {
-            app_config.cuda.device = atoi(argv[++i]);
+            if (parse_int_option(argv[i], argv[i + 1], 0, INT_MAX, &app_config.cuda.device) != 0) {
+                return 2;
+            }
+            ++i;
             worker_override = 1;
         } else if (strcmp(argv[i], "--cuda-batch") == 0 && i + 1 < argc) {
-            app_config.cuda.batch_size = (uint32_t)strtoul(argv[++i], NULL, 10);
+            if (parse_u32_option(argv[i], argv[i + 1], 0, UINT32_MAX, &app_config.cuda.batch_size) != 0) {
+                return 2;
+            }
+            ++i;
             worker_override = 1;
         } else if (strcmp(argv[i], "--cuda-block") == 0 && i + 1 < argc) {
-            app_config.cuda.threads_per_block = (uint32_t)strtoul(argv[++i], NULL, 10);
+            if (parse_u32_option(argv[i], argv[i + 1], 0, UINT32_MAX, &app_config.cuda.threads_per_block) != 0) {
+                return 2;
+            }
+            ++i;
             worker_override = 1;
         } else if (strcmp(argv[i], "--cuda-npt") == 0 && i + 1 < argc) {
-            app_config.cuda.nonces_per_thread = (uint32_t)strtoul(argv[++i], NULL, 10);
+            if (parse_u32_option(argv[i], argv[i + 1], 0, UINT32_MAX, &app_config.cuda.nonces_per_thread) != 0) {
+                return 2;
+            }
+            ++i;
             worker_override = 1;
         } else if (strcmp(argv[i], "--cuda-kernel") == 0 && i + 1 < argc) {
             int parsed = parse_cuda_kernel_variant(argv[++i], -1);
@@ -2260,7 +2363,10 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--no-autotune") == 0) {
             app_config.autotune_enabled = 0;
         } else if (strcmp(argv[i], "--autotune-seconds") == 0 && i + 1 < argc) {
-            app_config.autotune_seconds = strtod(argv[++i], NULL);
+            if (parse_double_option(argv[i], argv[i + 1], 0.0, &app_config.autotune_seconds) != 0) {
+                return 2;
+            }
+            ++i;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             usage(argv[0]);
             return 0;
