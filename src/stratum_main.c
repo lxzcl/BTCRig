@@ -2027,7 +2027,7 @@ static void usage(const char *argv0) {
     printf("  user: %s\n", DEFAULT_USER);
     printf("  pass: %s\n", DEFAULT_PASSWORD);
     printf("  diff: %.6f\n", DEFAULT_SUGGEST_DIFFICULTY);
-    printf("  retries: infinite\n");
+    printf("  retries: infinite (-r 0 disables reconnect)\n");
     printf("  reconnect-delay: %d..%d seconds\n", DEFAULT_RECONNECT_DELAY, MAX_RECONNECT_DELAY);
     printf("  stats: %.1f seconds\n", DEFAULT_STATS_INTERVAL);
     printf("  threads: auto (%d recommended)\n", default_thread_count());
@@ -2044,7 +2044,7 @@ static void usage(const char *argv0) {
     printf("  TLS and plain TCP are supported: stratum+tls://host:port or stratum+tcp://host:port.\n");
     printf("  stratum+tls:// verifies trusted certificates first, then accepts self-signed TLS if needed.\n");
     printf("  Use stratum+tls-insecure://host:port to skip certificate verification immediately.\n");
-    printf("  Network reconnects are always infinite; -r is accepted for compatibility.\n");
+    printf("  Retries default to infinite; use -r 0 to disable reconnects.\n");
     printf("  Set BTC_MINER_VERBOSE_SHARES=0 to hide per-share submit and accepted logs.\n");
     printf("  Use --runtime 0 for no time limit.\n");
 }
@@ -2313,8 +2313,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    app_config.retries = -1;
-
     print_sha_backend_summary();
 
     int worker_enabled = app_config.cpu_enabled || app_config.opencl.enabled || app_config.cuda.enabled;
@@ -2326,7 +2324,14 @@ int main(int argc, char **argv) {
 
     const char *cuda_mode = app_config.cuda.enabled ? "single" : "off";
 
-    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mode=%s backend=%s kernel=%s cuda=%s mode=%s kernel=%s batch=%u block=%u npt=%u mine=%s retries=infinite retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
+    char retries_text[32];
+    if (app_config.retries < 0) {
+        snprintf(retries_text, sizeof(retries_text), "infinite");
+    } else {
+        snprintf(retries_text, sizeof(retries_text), "%d", app_config.retries);
+    }
+
+    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mode=%s backend=%s kernel=%s cuda=%s mode=%s kernel=%s batch=%u block=%u npt=%u mine=%s retries=%s retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
            C_CYAN,
            C_RESET,
            app_config.pool_count,
@@ -2345,6 +2350,7 @@ int main(int argc, char **argv) {
            app_config.cuda.threads_per_block,
            app_config.cuda.nonces_per_thread,
            mining_enabled ? "yes" : "no",
+           retries_text,
            app_config.reconnect_delay,
            MAX_RECONNECT_DELAY,
            app_config.stats_interval,
@@ -2374,7 +2380,7 @@ int main(int argc, char **argv) {
         }
 
         if (attempt > 0) {
-            printf("%s[RETRY]%s attempt %lu/infinite\n", C_YELLOW, C_RESET, attempt + 1);
+            printf("%s[RETRY]%s retry %lu/%s\n", C_YELLOW, C_RESET, attempt, retries_text);
         }
 
         pool_config_t donate_pool;
@@ -2435,6 +2441,11 @@ int main(int argc, char **argv) {
                    C_YELLOW, C_RESET);
         } else if (app_config.pool_count > 1) {
             pool_index = (pool_index + 1) % app_config.pool_count;
+        }
+
+        if (app_config.retries >= 0 && attempt >= (unsigned long)app_config.retries) {
+            printf("%s[RETRY]%s retry limit reached (%d)\n", C_YELLOW, C_RESET, app_config.retries);
+            break;
         }
 
         {

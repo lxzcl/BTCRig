@@ -222,6 +222,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 -t, --threads N            CPU 线程数，0 表示自动
 --stats N                  每 N 秒输出统计
 --runtime N                运行 N 秒，0 表示不限时
+--retries N                重连次数，-1 表示无限重连，0 表示不重连
 --donate-level N           捐助比例，编译默认 1，最低 1
 --no-mine                  只测试连接，不启动挖矿
 --no-cpu                   关闭 CPU worker
@@ -315,6 +316,8 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 ```
 
 `diff` 只是初始建议值，实际 share 难度由矿池通过 `mining.set_difficulty` 下发。
+
+`retries` 默认是 `-1`，用于无人值守时无限重连。设为 `0` 表示只连接一次不重连，设为正数表示限制重连次数。
 
 OpenCL 和 CUDA 都是运行时可选模块。构建机器如果有 OpenCL 头文件，`btc_stratum` 默认会包含 OpenCL worker；如果没有，则跳过这条路径。OpenCL 和 CUDA 都通过运行时驱动加载，只有设置 `opencl.enabled=true`、`cuda.enabled=true`，或传入 `--opencl` / `--cuda` 才会启用。开启任意 GPU 后端但找不到可用设备时，程序会输出警告，并继续保留 CPU 路径。启用 OpenCL 且没有配置具体设备列表时，会默认使用全部 OpenCL GPU 设备；CUDA 当前使用一张指定的 NVIDIA 设备。
 

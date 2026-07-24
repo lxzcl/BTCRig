@@ -222,6 +222,7 @@ Common commands:
 -t, --threads N            CPU thread count, 0 means auto
 --stats N                  statistics interval in seconds
 --runtime N                runtime limit, 0 means unlimited
+--retries N                reconnect attempts, -1 means infinite, 0 disables reconnect
 --donate-level N           donation percentage, compiled default 1, minimum 1
 --no-mine                  test the connection without mining
 --no-cpu                   disable CPU workers
@@ -315,6 +316,8 @@ Interactive keys while mining:
 ```
 
 The pool controls the effective share difficulty through `mining.set_difficulty`; `diff` is only an initial suggestion.
+
+`retries` defaults to `-1` for unattended infinite reconnects. Set it to `0` to try once without reconnecting, or to a positive number to cap reconnect attempts.
 
 OpenCL and CUDA are opt-in at runtime. If the build machine has OpenCL headers, `btc_stratum` includes the OpenCL worker by default; otherwise that path is skipped. OpenCL and CUDA are loaded through runtime driver loading and stay inactive unless `opencl.enabled=true`, `cuda.enabled=true`, `--opencl`, or `--cuda` is used. Enabling either GPU backend without a usable device prints a warning and keeps the CPU path available. When OpenCL is enabled and no specific device list is configured, all OpenCL GPU devices are used; CUDA currently uses one selected NVIDIA device.
 

@@ -6,8 +6,9 @@ root_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 src="$root_dir/src/cuda_sha256d_kernel.cu"
 ptx="${TMPDIR:-/tmp}/btcrig_cuda_sha256d_${arch}.ptx"
 out="$root_dir/src/cuda_sha256d_ptx.h"
+clangxx="${CLANGXX:-clang++}"
 
-clang++ -x cuda --cuda-gpu-arch="$arch" -S --cuda-device-only \
+"$clangxx" -x cuda --cuda-gpu-arch="$arch" -S --cuda-device-only \
     -nocudainc -nocudalib -O3 "$src" -o "$ptx"
 
 if grep -q 'lop3\.b32' "$ptx"; then

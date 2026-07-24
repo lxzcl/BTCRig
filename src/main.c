@@ -220,6 +220,7 @@ static int parse_positive_int(const char *text, int fallback) {
     return (int)value;
 }
 
+#if defined(BTC_MINER_OPENCL) || defined(BTC_MINER_CUDA)
 static int parse_nonnegative_int(const char *text, int fallback) {
     if (text == NULL || *text == '\0') {
         return fallback;
@@ -247,6 +248,7 @@ static uint32_t parse_positive_u32(const char *text, uint32_t fallback) {
     }
     return (uint32_t)value;
 }
+#endif
 
 #if defined(BTC_MINER_OPENCL)
 static int parse_opencl_backend_variant(const char *value, int fallback) {

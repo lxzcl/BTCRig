@@ -277,3 +277,8 @@ target_link_libraries(btc_proxy PRIVATE
 )
 
 btcrig_link_windows_sockets(btc_proxy)
+
+enable_testing()
+add_test(NAME btc_stratum_self_test COMMAND btc_stratum --self-test)
+add_test(NAME btc_bench_version COMMAND btc_bench --version)
+add_test(NAME btc_proxy_version COMMAND btc_proxy --version)
