@@ -2084,7 +2084,7 @@ static void usage(const char *argv0) {
     printf("  reconnect-delay: %d..%d seconds\n", DEFAULT_RECONNECT_DELAY, MAX_RECONNECT_DELAY);
     printf("  stats: %.1f seconds\n", DEFAULT_STATS_INTERVAL);
     printf("  threads: auto (%d recommended)\n", default_thread_count());
-    printf("  opencl: manual enable uses all OpenCL GPU devices unless a device is selected; autotune may select it\n");
+    printf("  opencl: packaged config enables all OpenCL GPU devices unless a device is selected\n");
     printf("  opencl compat10: OpenCL 1.0/1.1 compatible, requires global int32 atomics on 1.0 devices\n");
     printf("  opencl backend auto: benchmarks compat10 and modern when supported\n");
     printf("  opencl kernel: auto tests compact/unrolled plus modern fixed-npi and register-heavy variants when supported\n");

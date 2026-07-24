@@ -11,7 +11,7 @@
     "threads": 0
   },
   "opencl": {
-    "enabled": false,
+    "enabled": true,
     "all-devices": true,
     "platform": 0,
     "device": 0,

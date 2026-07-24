@@ -49,7 +49,7 @@ BTCRig 是一个跨平台 C 项目，提供 SHA256d 基准、Stratum V1 挖矿�
 ## 主要特性
 
 - 自动选择 x86 SHA-NI、ARMv8 SHA2、OpenSSL 或普通 C 后端。
-- 可选 OpenCL GPU 路径，包含 compat10 兜底和 OpenCL 1.2+ modern fixed-npi/register-heavy 候选，运行时默认关闭。
+- 可选 OpenCL GPU 路径，包含 compat10 兜底和 OpenCL 1.2+ modern fixed-npi/register-heavy 候选；随包配置默认开启，缺 runtime 或设备时会安全跳过。
 - 可选 CUDA GPU 路径，使用 NVIDIA Driver API 和内嵌 PTX，包含 standard、dual nonce、fixed-npt、lop3 和 fixed-lop3 kernel 变体；运行时默认关闭，目标机器不需要安装 CUDA Toolkit。
 - CPU/GPU 混合 nonce 调度：GPU worker 保持较大的调度 batch，CPU worker 在混合模式下自动使用较小块，降低新 job 到来后的旧任务滞留。
 - x86 SHA-NI 双路交错扫描，ARMv8 SHA2 专用 range scan。
@@ -141,7 +141,7 @@ cmake --build build -j"$(nproc)"
 ./build/btc_stratum --cuda
 ```
 
-`config.json` 默认仍然关闭 OpenCL。`-DBTCRIG_OPENCL=ON` 只表示把 GPU worker 编译进程序；实际运行时需要手动设置 `opencl.enabled=true`，或传入 `--opencl` / `--opencl-all` 才会使用显卡。OpenCL runtime 会动态加载，所以缺少 `OpenCL.dll` 或 `libOpenCL.so.1` 时仍可正常 CPU-only 启动。
+随包 `config.json` 默认开启 OpenCL。`-DBTCRIG_OPENCL=ON` 只表示把 GPU worker 编译进程序；OpenCL runtime 会动态加载，所以缺少 `OpenCL.dll` 或 `libOpenCL.so.1` 时仍可正常 CPU-only 启动。
 
 `config.json` 默认也关闭 CUDA。`-DBTCRIG_CUDA=ON` 会编译 CUDA worker 和 `btc_bench --cuda`；运行时只需要 NVIDIA 驱动提供 Windows 上的 `nvcuda.dll` 或 Linux 上的 `libcuda.so.1`。只有需要用 `tools/generate_cuda_ptx.sh` 重新生成 `src/cuda_sha256d_ptx.h` 时，才需要 CUDA Toolkit 或能编译 CUDA device code 的 clang。可以用 `tools/analyze_cuda_ptx.sh sm_86` 查看内嵌 CUDA kernel 的 PTX 级寄存器和指令计数。
 
@@ -279,7 +279,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
     "threads": 0
   },
   "opencl": {
-    "enabled": false,
+    "enabled": true,
     "all-devices": true,
     "platform": 0,
     "device": 0,
@@ -319,11 +319,11 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 
 `retries` 默认是 `-1`，用于无人值守时无限重连。设为 `0` 表示只连接一次不重连，设为正数表示限制重连次数。
 
-OpenCL 和 CUDA 都是运行时可选模块。构建机器如果有 OpenCL 头文件，`btc_stratum` 默认会包含 OpenCL worker；如果没有，则跳过这条路径。OpenCL 和 CUDA 都通过运行时驱动加载，只有设置 `opencl.enabled=true`、`cuda.enabled=true`，或传入 `--opencl` / `--cuda` 才会启用。开启任意 GPU 后端但找不到可用设备时，程序会输出警告，并继续保留 CPU 路径。启用 OpenCL 且没有配置具体设备列表时，会默认使用全部 OpenCL GPU 设备；CUDA 当前使用一张指定的 NVIDIA 设备。
+随包配置默认开启 OpenCL，CUDA 仍是运行时可选模块。构建机器如果有 OpenCL 头文件，`btc_stratum` 默认会包含 OpenCL worker；如果没有，则跳过这条路径。OpenCL 和 CUDA 都通过运行时驱动加载，开启任意 GPU 后端但找不到可用 runtime 或设备时，程序会输出警告，并继续保留 CPU 路径。启用 OpenCL 且没有配置具体设备列表时，会默认使用全部 OpenCL GPU 设备；CUDA 当前使用一张指定的 NVIDIA 设备。
 
 CPU、OpenCL 和 CUDA worker 共用一个 nonce 分配器，因此不会扫描重叠 nonce。纯 CPU 模式下 CPU worker 使用较大的 nonce 块；只要存在 GPU worker，CPU worker 会自动切换为较小块，而 GPU worker 继续使用配置中的 `batch-size`。新 job、暂停/恢复和停止会直接唤醒等待中的 worker，不再只依赖周期性轮询。
 
-默认配置中 `autotune.enabled=true`、`autotune.cpu-self-test=false` 且 `autotune.gpu-self-test=false`。第一次正常挖矿启动时，程序会先离线运行 self-test 和基准测试，再连接矿池。CPU 和 GPU 的完成标记会分开记录：只运行 CPU 时只会把 `cpu-self-test` 改成 `true`，之后再启用 OpenCL 或 CUDA 仍会触发 GPU 调优，并保留已有 CPU 结果。只有当 `config.json` 中 `opencl.enabled=true`、`cuda.enabled=true`，或者命令行传入对应 GPU 参数时，自动调优才会测试 GPU 模式；默认 GPU 后端关闭时只测试 CPU，并保持 GPU 后端关闭。如果 OpenCL 已启用，它会先对每张 OpenCL GPU 分阶段测试 `backend`、`kernel`、`local-work-size`、`nonces-per-work-item` 和 `batch-size`，然后测试 CPU-only、全部 GPU、CPU+全部 GPU、半数 CPU+全部 GPU、每张单独 GPU、CPU+每张单独 GPU；如果机器有超过两张 GPU，还会测试“全部 GPU 去掉其中一张”的组合。如果 CUDA 已启用，会先预热选中的 NVIDIA 设备，调优 `kernel`、`threads-per-block`、`nonces-per-thread` 和 `batch-size`，再测试 CUDA-only、CPU+CUDA 和半数 CPU+CUDA。测试结束后会把最快模式和每种模式的算力写回 `config.json`。旧版 `autotune.self-test`、`self_test`、`done` 和 `completed` 字段仍会作为 CPU 完成标记兼容读取。
+默认配置中 `autotune.enabled=true`、`autotune.cpu-self-test=false` 且 `autotune.gpu-self-test=false`。第一次正常挖矿启动时，程序会先离线运行 self-test 和基准测试，再连接矿池。CPU 和 GPU 的完成标记会分开记录：只运行 CPU 时只会把 `cpu-self-test` 改成 `true`，之后再启用 OpenCL 或 CUDA 仍会触发 GPU 调优，并保留已有 CPU 结果。当 `config.json` 中 `opencl.enabled=true`、`cuda.enabled=true`，或者命令行传入对应 GPU 参数时，自动调优会测试 GPU 模式；随包配置默认开启 OpenCL。如果两个 GPU 后端都关闭，自动调优会保持 CPU-only。如果 OpenCL 已启用，它会先对每张 OpenCL GPU 分阶段测试 `backend`、`kernel`、`local-work-size`、`nonces-per-work-item` 和 `batch-size`，然后测试 CPU-only、全部 GPU、CPU+全部 GPU、半数 CPU+全部 GPU、每张单独 GPU、CPU+每张单独 GPU；如果机器有超过两张 GPU，还会测试“全部 GPU 去掉其中一张”的组合。如果 CUDA 已启用，会先预热选中的 NVIDIA 设备，调优 `kernel`、`threads-per-block`、`nonces-per-thread` 和 `batch-size`，再测试 CUDA-only、CPU+CUDA 和半数 CPU+CUDA。测试结束后会把最快模式和每种模式的算力写回 `config.json`。旧版 `autotune.self-test`、`self_test`、`done` 和 `completed` 字段仍会作为 CPU 完成标记兼容读取。
 
 这里故意不穷举所有 CPU/GPU 子集。高价值组合已经能覆盖常见情况：独显加核显、CPU 线程和 GPU 驱动抢资源、某张慢卡或不稳定卡拖累整体。换驱动、改频率、换硬件，或调整 OpenCL batch/local/npi、CUDA kernel/batch/block/npt 后，可以用 `--autotune` 重新测试。
 
