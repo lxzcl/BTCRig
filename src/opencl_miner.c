@@ -1,18 +1,29 @@
 #include "opencl_miner.h"
+#include "opencl_loader.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef CL_TARGET_OPENCL_VERSION
-#define CL_TARGET_OPENCL_VERSION 100
-#endif
-
-#if defined(__APPLE__)
-#include <OpenCL/opencl.h>
-#else
-#include <CL/cl.h>
-#endif
+#define clGetPlatformIDs btcrig_opencl_api()->clGetPlatformIDs
+#define clGetDeviceIDs btcrig_opencl_api()->clGetDeviceIDs
+#define clGetDeviceInfo btcrig_opencl_api()->clGetDeviceInfo
+#define clCreateContext btcrig_opencl_api()->clCreateContext
+#define clCreateCommandQueue btcrig_opencl_api()->clCreateCommandQueue
+#define clCreateBuffer btcrig_opencl_api()->clCreateBuffer
+#define clCreateProgramWithSource btcrig_opencl_api()->clCreateProgramWithSource
+#define clBuildProgram btcrig_opencl_api()->clBuildProgram
+#define clGetProgramBuildInfo btcrig_opencl_api()->clGetProgramBuildInfo
+#define clCreateKernel btcrig_opencl_api()->clCreateKernel
+#define clReleaseKernel btcrig_opencl_api()->clReleaseKernel
+#define clReleaseProgram btcrig_opencl_api()->clReleaseProgram
+#define clReleaseMemObject btcrig_opencl_api()->clReleaseMemObject
+#define clReleaseCommandQueue btcrig_opencl_api()->clReleaseCommandQueue
+#define clReleaseContext btcrig_opencl_api()->clReleaseContext
+#define clEnqueueWriteBuffer btcrig_opencl_api()->clEnqueueWriteBuffer
+#define clSetKernelArg btcrig_opencl_api()->clSetKernelArg
+#define clEnqueueNDRangeKernel btcrig_opencl_api()->clEnqueueNDRangeKernel
+#define clEnqueueReadBuffer btcrig_opencl_api()->clEnqueueReadBuffer
 
 #define OPENCL_DEFAULT_BATCH_SIZE 1048576U
 #define OPENCL_DEFAULT_MAX_RESULTS 256U
@@ -988,6 +999,10 @@ int opencl_miner_resolve_devices(const miner_opencl_config_t *config,
         return 1;
     }
 
+    if (btcrig_opencl_load(error, error_size) != 0) {
+        return -1;
+    }
+
     cl_uint platform_count = 0;
     cl_int rc = clGetPlatformIDs(0, NULL, &platform_count);
     if (rc != CL_SUCCESS || platform_count == 0) {
@@ -1163,6 +1178,10 @@ opencl_miner_t *opencl_miner_create(const miner_opencl_config_t *config,
                                     char *error,
                                     size_t error_size) {
     cl_int rc = CL_SUCCESS;
+    if (btcrig_opencl_load(error, error_size) != 0) {
+        return NULL;
+    }
+
     opencl_miner_t *miner = calloc(1, sizeof(*miner));
     if (miner == NULL) {
         set_error(error, error_size, "OpenCL miner allocation failed", CL_SUCCESS);

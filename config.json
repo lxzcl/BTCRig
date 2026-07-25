@@ -11,7 +11,7 @@
     "threads": 0
   },
   "opencl": {
-    "enabled": false,
+    "enabled": true,
     "all-devices": true,
     "platform": 0,
     "device": 0,
@@ -20,6 +20,14 @@
     "nonces-per-work-item": 1,
     "backend": "auto",
     "kernel": "auto",
+    "max-results": 256
+  },
+  "cuda": {
+    "enabled": false,
+    "device": 0,
+    "batch-size": 4194304,
+    "threads-per-block": 256,
+    "nonces-per-thread": 1,
     "max-results": 256
   },
   "pools": [

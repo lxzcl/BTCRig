@@ -8,6 +8,9 @@
 #if defined(BTC_MINER_OPENCL)
 #include "opencl_miner.h"
 #endif
+#if defined(BTC_MINER_CUDA)
+#include "cuda_miner.h"
+#endif
 
 #include <errno.h>
 #include <math.h>
@@ -26,12 +29,9 @@
 
 #define MINER_BATCH_SIZE 262144U
 #define MINER_MIXED_CPU_BATCH_SIZE 65536U
-#define MINER_OPENCL_DEFAULT_BATCH_SIZE 1048576U
-#define MINER_OPENCL_DEFAULT_NONCES_PER_WORK_ITEM 1U
-#define MINER_OPENCL_DEFAULT_MAX_RESULTS 256U
 #define SHARE_QUEUE_SIZE 256
 
-#if defined(BTC_MINER_OPENCL)
+#if defined(BTC_MINER_OPENCL) || defined(BTC_MINER_CUDA)
 static void miner_sleep_ms(unsigned int ms) {
 #if defined(_WIN32)
     Sleep(ms);
@@ -59,13 +59,20 @@ struct miner {
     opencl_miner_t **opencl_devices;
     uint64_t *opencl_hashes;
 #endif
+#if defined(BTC_MINER_CUDA)
+    pthread_t cuda_thread;
+    cuda_miner_t *cuda_device;
+    uint64_t cuda_hashes;
+#endif
     int thread_count;
     int started;
     int opencl_started;
+    int cuda_started;
     int stop;
     int paused;
     uint64_t pause_epoch;
     miner_opencl_config_t opencl_config;
+    miner_cuda_config_t cuda_config;
 
     active_job_t job;
     uint64_t next_nonce;
@@ -90,6 +97,13 @@ typedef struct {
     opencl_miner_t *opencl;
     int id;
 } opencl_worker_arg_t;
+#endif
+
+#if defined(BTC_MINER_CUDA)
+typedef struct {
+    miner_t *miner;
+    cuda_miner_t *cuda;
+} cuda_worker_arg_t;
 #endif
 
 static int hex_value(char c) {
@@ -402,6 +416,11 @@ static int copy_job_and_nonce_range(miner_t *miner,
         batch_size = MINER_MIXED_CPU_BATCH_SIZE;
     }
 #endif
+#if defined(BTC_MINER_CUDA)
+    if (miner != NULL && miner->cuda_started > 0) {
+        batch_size = MINER_MIXED_CPU_BATCH_SIZE;
+    }
+#endif
     return copy_job_and_nonce_range_sized(miner, job, start_nonce, count, batch_size);
 }
 
@@ -410,7 +429,13 @@ static uint32_t miner_cpu_batch_size(const miner_t *miner) {
     if (miner != NULL && miner->opencl_started > 0) {
         return MINER_MIXED_CPU_BATCH_SIZE;
     }
-#else
+#endif
+#if defined(BTC_MINER_CUDA)
+    if (miner != NULL && miner->cuda_started > 0) {
+        return MINER_MIXED_CPU_BATCH_SIZE;
+    }
+#endif
+#if !defined(BTC_MINER_OPENCL) && !defined(BTC_MINER_CUDA)
     (void)miner;
 #endif
     return MINER_BATCH_SIZE;
@@ -643,11 +668,107 @@ static void *opencl_worker_main(void *opaque) {
 }
 #endif
 
+#if defined(BTC_MINER_CUDA)
+static void *cuda_worker_main(void *opaque) {
+    cuda_worker_arg_t *arg = (cuda_worker_arg_t *)opaque;
+    miner_t *miner = arg->miner;
+    cuda_miner_t *cuda = arg->cuda;
+    uint32_t batch_size = cuda_miner_batch_size(cuda);
+
+    free(arg);
+
+    for (;;) {
+        pthread_mutex_lock(&miner->lock);
+        int stop = miner->stop;
+        int paused = miner->paused;
+        pthread_mutex_unlock(&miner->lock);
+        if (stop) {
+            break;
+        }
+        if (paused) {
+            miner_wait_for_work(miner);
+            continue;
+        }
+
+        active_job_t job;
+        uint32_t start_nonce = 0;
+        uint32_t nonce_count = 0;
+        if (!copy_job_and_nonce_range_sized(miner, &job, &start_nonce, &nonce_count, batch_size)) {
+            miner_wait_for_work(miner);
+            continue;
+        }
+
+        scan_match_context_t scan_context = {
+            .miner = miner,
+            .job = &job,
+        };
+
+        if (cuda_miner_scan(cuda,
+                            &job.midstate,
+                            job.tail_words,
+                            job.target_words,
+                            start_nonce,
+                            nonce_count,
+                            &scan_context,
+                            queue_scan_match) != 0) {
+            fprintf(stderr, "%s[CUDA]%s scan failed; retrying\n", C_YELLOW, C_RESET);
+            miner_sleep_ms(250);
+            continue;
+        }
+
+        pthread_mutex_lock(&miner->lock);
+        if (scan_result_still_current_locked(miner, &job)) {
+            miner->hashes += nonce_count;
+            miner->cuda_hashes += nonce_count;
+        }
+        pthread_mutex_unlock(&miner->lock);
+    }
+
+    return NULL;
+}
+#endif
+
+static void destroy_unstarted_gpu_devices(miner_t *miner) {
+#if !defined(BTC_MINER_OPENCL) && !defined(BTC_MINER_CUDA)
+    (void)miner;
+#endif
+#if defined(BTC_MINER_OPENCL)
+    for (int i = 0; i < miner->opencl_started; ++i) {
+        if (miner->opencl_devices != NULL && miner->opencl_devices[i] != NULL) {
+            opencl_miner_destroy(miner->opencl_devices[i]);
+            miner->opencl_devices[i] = NULL;
+        }
+    }
+    miner->opencl_started = 0;
+#endif
+#if defined(BTC_MINER_CUDA)
+    if (miner->cuda_device != NULL) {
+        cuda_miner_destroy(miner->cuda_device);
+        miner->cuda_device = NULL;
+    }
+    miner->cuda_started = 0;
+#endif
+}
+
+static int stop_partially_started_cpu_threads(miner_t *miner, int thread_count) {
+    destroy_unstarted_gpu_devices(miner);
+    miner->thread_count = thread_count;
+    miner->started = 1;
+    miner_stop(miner);
+    return -1;
+}
+
 miner_t *miner_create(int thread_count) {
     return miner_create_with_options(thread_count, NULL);
 }
 
 miner_t *miner_create_with_options(int thread_count, const miner_opencl_config_t *opencl_config) {
+    return miner_create_with_backend_options(thread_count, opencl_config, NULL);
+}
+
+miner_t *miner_create_with_backend_options(int thread_count,
+                                           const miner_opencl_config_t *opencl_config,
+                                           const miner_cuda_config_t *cuda_config) {
     if (thread_count < 0) {
         thread_count = 0;
     }
@@ -673,6 +794,11 @@ miner_t *miner_create_with_options(int thread_count, const miner_opencl_config_t
     miner->thread_count = thread_count;
     miner->next_nonce = 0;
     miner_opencl_config_defaults(&miner->opencl_config);
+#if defined(BTC_MINER_CUDA)
+    miner_cuda_config_defaults(&miner->cuda_config);
+#else
+    memset(&miner->cuda_config, 0, sizeof(miner->cuda_config));
+#endif
     if (opencl_config != NULL) {
         miner->opencl_config = *opencl_config;
         if (miner->opencl_config.batch_size == 0) {
@@ -693,6 +819,25 @@ miner_t *miner_create_with_options(int thread_count, const miner_opencl_config_t
             miner->opencl_config.kernel_variant = MINER_OPENCL_KERNEL_AUTO;
         }
     }
+    if (cuda_config != NULL) {
+        miner->cuda_config = *cuda_config;
+        if (miner->cuda_config.batch_size == 0) {
+            miner->cuda_config.batch_size = MINER_CUDA_DEFAULT_BATCH_SIZE;
+        }
+        if (miner->cuda_config.threads_per_block == 0) {
+            miner->cuda_config.threads_per_block = MINER_CUDA_DEFAULT_THREADS_PER_BLOCK;
+        }
+        if (miner->cuda_config.nonces_per_thread == 0) {
+            miner->cuda_config.nonces_per_thread = MINER_CUDA_DEFAULT_NONCES_PER_THREAD;
+        }
+        if (miner->cuda_config.max_results == 0) {
+            miner->cuda_config.max_results = MINER_CUDA_DEFAULT_MAX_RESULTS;
+        }
+        if (miner->cuda_config.kernel_variant < MINER_CUDA_KERNEL_STANDARD ||
+            miner->cuda_config.kernel_variant > MINER_CUDA_KERNEL_LAST) {
+            miner->cuda_config.kernel_variant = MINER_CUDA_DEFAULT_KERNEL_VARIANT;
+        }
+    }
     return miner;
 }
 
@@ -708,6 +853,11 @@ void miner_destroy(miner_t *miner) {
     free(miner->opencl_devices);
     free(miner->opencl_threads);
 #endif
+#if defined(BTC_MINER_CUDA)
+    if (miner->cuda_device != NULL) {
+        cuda_miner_destroy(miner->cuda_device);
+    }
+#endif
     free(miner->thread_hashes);
     free(miner->threads);
     free(miner);
@@ -717,7 +867,9 @@ int miner_start(miner_t *miner) {
     if (miner == NULL || miner->started) {
         return 0;
     }
+    int requested_cpu_threads = miner->thread_count;
     int opencl_running = 0;
+    int cuda_running = 0;
 
 #if defined(BTC_MINER_OPENCL)
     if (miner->opencl_config.enabled) {
@@ -805,24 +957,78 @@ int miner_start(miner_t *miner) {
     }
 #endif
 
-    if (miner->thread_count <= 0
+#if defined(BTC_MINER_CUDA)
+    if (miner->cuda_config.enabled) {
+        char error[512];
+        cuda_self_test_result_t test_result;
+        error[0] = '\0';
+        if (cuda_miner_self_test(&miner->cuda_config, &test_result, error, sizeof(error)) != 0) {
+            fprintf(stderr,
+                    "%s[CUDA]%s device=%d self-test failed: %s\n",
+                    C_YELLOW,
+                    C_RESET,
+                    miner->cuda_config.device,
+                    error[0] != '\0' ? error : "unknown error");
+        } else {
+            error[0] = '\0';
+            miner->cuda_device = cuda_miner_create(&miner->cuda_config, error, sizeof(error));
+            if (miner->cuda_device == NULL) {
+                fprintf(stderr,
+                        "%s[CUDA]%s device=%d unavailable: %s\n",
+                        C_YELLOW,
+                        C_RESET,
+                        miner->cuda_config.device,
+                        error[0] != '\0' ? error : "unknown error");
+            } else {
+                miner->cuda_started = 1;
+                printf("%s[CUDA]%s device=%d self-test=ok name=%s%s%s compute=sm_%d%d driver=%d kernel=%s batch=%u block=%u npt=%u\n",
+                       C_CYAN,
+                       C_RESET,
+                       miner->cuda_config.device,
+                       C_BRIGHT_CYAN,
+                       cuda_miner_device_name(miner->cuda_device),
+                       C_RESET,
+                       cuda_miner_compute_major(miner->cuda_device),
+                       cuda_miner_compute_minor(miner->cuda_device),
+                       cuda_miner_driver_version(miner->cuda_device),
+                       cuda_miner_kernel_variant_name(cuda_miner_kernel_variant(miner->cuda_device)),
+                       cuda_miner_batch_size(miner->cuda_device),
+                       cuda_miner_threads_per_block(miner->cuda_device),
+                       cuda_miner_nonces_per_thread(miner->cuda_device));
+            }
+        }
+    }
+#else
+    if (miner->cuda_config.enabled) {
+        fprintf(stderr, "%s[CUDA]%s unavailable: this build was compiled without CUDA support\n",
+                C_YELLOW,
+                C_RESET);
+    }
+#endif
+
+    if (requested_cpu_threads <= 0
 #if defined(BTC_MINER_OPENCL)
         && miner->opencl_started <= 0
+#endif
+#if defined(BTC_MINER_CUDA)
+        && miner->cuda_started <= 0
 #endif
     ) {
         return -1;
     }
 
-    for (int i = 0; i < miner->thread_count; ++i) {
+    miner->thread_count = 0;
+    for (int i = 0; i < requested_cpu_threads; ++i) {
         worker_arg_t *arg = malloc(sizeof(*arg));
         if (arg == NULL) {
-            return -1;
+            return stop_partially_started_cpu_threads(miner, i);
         }
         arg->miner = miner;
         arg->id = i;
+        miner->thread_count = i + 1;
         if (pthread_create(&miner->threads[i], NULL, worker_main, arg) != 0) {
             free(arg);
-            return -1;
+            return stop_partially_started_cpu_threads(miner, i);
         }
     }
 
@@ -851,13 +1057,44 @@ int miner_start(miner_t *miner) {
             ++opencl_running;
         }
     }
+#if !defined(BTC_MINER_CUDA)
     if (miner->thread_count <= 0 && opencl_running <= 0) {
+        miner->started = 1;
+        miner_stop(miner);
+        return -1;
+    }
+#endif
+#endif
+
+#if defined(BTC_MINER_CUDA)
+    if (miner->cuda_started > 0 && miner->cuda_device != NULL) {
+        cuda_worker_arg_t *arg = malloc(sizeof(*arg));
+        if (arg == NULL) {
+            fprintf(stderr, "%s[CUDA]%s failed to allocate worker arg\n", C_BRIGHT_RED, C_RESET);
+            cuda_miner_destroy(miner->cuda_device);
+            miner->cuda_device = NULL;
+            miner->cuda_started = 0;
+        } else {
+            arg->miner = miner;
+            arg->cuda = miner->cuda_device;
+            if (pthread_create(&miner->cuda_thread, NULL, cuda_worker_main, arg) != 0) {
+                fprintf(stderr, "%s[CUDA]%s failed to start worker thread\n", C_BRIGHT_RED, C_RESET);
+                free(arg);
+                cuda_miner_destroy(miner->cuda_device);
+                miner->cuda_device = NULL;
+                miner->cuda_started = 0;
+            } else {
+                cuda_running = 1;
+            }
+        }
+    }
+    if (miner->thread_count <= 0 && opencl_running <= 0 && cuda_running <= 0) {
         return -1;
     }
 #endif
 
     miner->started = 1;
-    printf("%s[MINER]%s started cpu-threads=%s%d%s opencl-devices=%s%d%s cpu-batch=%u affinity=%soff%s\n",
+    printf("%s[MINER]%s started cpu-threads=%s%d%s opencl-devices=%s%d%s cuda-devices=%s%d%s cpu-batch=%u affinity=%soff%s\n",
            C_MAGENTA,
            C_RESET,
            C_BRIGHT_GREEN,
@@ -865,6 +1102,9 @@ int miner_start(miner_t *miner) {
            C_RESET,
            opencl_running ? C_BRIGHT_GREEN : C_GRAY,
            opencl_running,
+           C_RESET,
+           cuda_running ? C_BRIGHT_GREEN : C_GRAY,
+           cuda_running,
            C_RESET,
            miner_cpu_batch_size(miner),
            C_GRAY,
@@ -894,6 +1134,14 @@ void miner_stop(miner_t *miner) {
         }
     }
     miner->opencl_started = 0;
+#endif
+#if defined(BTC_MINER_CUDA)
+    if (miner->cuda_started > 0 && miner->cuda_device != NULL) {
+        pthread_join(miner->cuda_thread, NULL);
+        cuda_miner_destroy(miner->cuda_device);
+        miner->cuda_device = NULL;
+    }
+    miner->cuda_started = 0;
 #endif
     miner->started = 0;
 }
@@ -1009,7 +1257,13 @@ int miner_thread_count(miner_t *miner) {
         }
     }
 #endif
-    int count = miner->thread_count + opencl_count;
+    int cuda_count = 0;
+#if defined(BTC_MINER_CUDA)
+    if (miner->cuda_started > 0 && miner->cuda_device != NULL) {
+        cuda_count = 1;
+    }
+#endif
+    int count = miner->thread_count + opencl_count + cuda_count;
     pthread_mutex_unlock(&miner->lock);
     return count;
 }
@@ -1028,7 +1282,13 @@ int miner_snapshot_thread_hashes(miner_t *miner, uint64_t *out, int max_count) {
         }
     }
 #endif
-    int count = miner->thread_count + opencl_count;
+    int cuda_count = 0;
+#if defined(BTC_MINER_CUDA)
+    if (miner->cuda_started > 0 && miner->cuda_device != NULL) {
+        cuda_count = 1;
+    }
+#endif
+    int count = miner->thread_count + opencl_count + cuda_count;
     if (count > max_count) {
         count = max_count;
     }
@@ -1036,12 +1296,19 @@ int miner_snapshot_thread_hashes(miner_t *miner, uint64_t *out, int max_count) {
     for (int i = 0; i < cpu_count; ++i) {
         out[i] = miner->thread_hashes[i];
     }
-#if defined(BTC_MINER_OPENCL)
+#if defined(BTC_MINER_OPENCL) || defined(BTC_MINER_CUDA)
     int out_index = cpu_count;
+#endif
+#if defined(BTC_MINER_OPENCL)
     for (int i = 0; i < miner->opencl_started && out_index < count; ++i) {
         if (miner->opencl_devices != NULL && miner->opencl_devices[i] != NULL) {
             out[out_index++] = miner->opencl_hashes[i];
         }
+    }
+#endif
+#if defined(BTC_MINER_CUDA)
+    if (miner->cuda_started > 0 && miner->cuda_device != NULL && out_index < count) {
+        out[out_index++] = miner->cuda_hashes;
     }
 #endif
     pthread_mutex_unlock(&miner->lock);

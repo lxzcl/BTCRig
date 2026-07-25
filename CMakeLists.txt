@@ -16,6 +16,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 option(BTC_MINER_NATIVE "Enable native CPU tuning for this machine" OFF)
 option(BTCRIG_OPENCL "Enable optional OpenCL mining backend when the SDK is available" ON)
+option(BTCRIG_CUDA "Enable optional CUDA driver backend when the NVIDIA driver is available" ON)
 
 if(BTC_MINER_NATIVE AND
    (CMAKE_SYSTEM_NAME STREQUAL "Android" OR CMAKE_C_COMPILER_TARGET MATCHES "android"))
@@ -34,6 +35,7 @@ pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
 include(CheckCCompilerFlag)
 include(CheckCSourceCompiles)
+include(CheckIncludeFile)
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/btcrig_version.h.in"
@@ -47,6 +49,9 @@ set(BTC_MINER_X86_SHA_NI_FLAGS "")
 set(BTC_MINER_NATIVE_FLAG "")
 set(BTC_MINER_ARM_SHA2_ENABLED FALSE)
 set(BTCRIG_OPENCL_ENABLED FALSE)
+set(BTCRIG_OPENCL_HEADERS_FOUND FALSE)
+set(BTCRIG_OPENCL_INCLUDE_DIRS "")
+set(BTCRIG_CUDA_ENABLED FALSE)
 
 check_c_compiler_flag("-march=native" HAS_MARCH_NATIVE)
 check_c_compiler_flag("-mcpu=native" HAS_MCPU_NATIVE)
@@ -113,12 +118,40 @@ if(HAS_X86_SHA_NI_INTRINSICS)
 endif()
 
 set(BTCRIG_OPENCL_SOURCES "")
-if(OpenCL_FOUND)
+if(BTCRIG_OPENCL)
+    set(BTCRIG_REQUIRED_INCLUDES_SAVE "${CMAKE_REQUIRED_INCLUDES}")
+    if(OpenCL_FOUND AND OpenCL_INCLUDE_DIRS)
+        set(CMAKE_REQUIRED_INCLUDES ${OpenCL_INCLUDE_DIRS})
+    endif()
+    check_include_file("CL/cl.h" BTCRIG_HAS_CL_CL_H)
+    check_include_file("OpenCL/opencl.h" BTCRIG_HAS_OPENCL_OPENCL_H)
+    set(CMAKE_REQUIRED_INCLUDES "${BTCRIG_REQUIRED_INCLUDES_SAVE}")
+
+    if(BTCRIG_HAS_CL_CL_H OR BTCRIG_HAS_OPENCL_OPENCL_H)
+        set(BTCRIG_OPENCL_HEADERS_FOUND TRUE)
+    endif()
+    if(OpenCL_FOUND AND OpenCL_INCLUDE_DIRS)
+        set(BTCRIG_OPENCL_INCLUDE_DIRS ${OpenCL_INCLUDE_DIRS})
+        set(BTCRIG_OPENCL_HEADERS_FOUND TRUE)
+    endif()
+endif()
+
+if(BTCRIG_OPENCL_HEADERS_FOUND)
     set(BTCRIG_OPENCL_ENABLED TRUE)
-    set(BTCRIG_OPENCL_SOURCES src/opencl_miner.c)
-    message(STATUS "OpenCL found: compat10 GPU backend will be built by default")
+    set(BTCRIG_OPENCL_SOURCES src/opencl_miner.c src/opencl_loader.c)
+    message(STATUS "OpenCL headers found: GPU backend will use runtime OpenCL loading")
 elseif(BTCRIG_OPENCL)
-    message(STATUS "OpenCL not found: building CPU-only miner")
+    message(STATUS "OpenCL headers not found: building CPU-only miner")
+endif()
+
+set(BTCRIG_CUDA_SOURCES "")
+if(BTCRIG_CUDA)
+    set(BTCRIG_CUDA_ENABLED TRUE)
+    set(BTCRIG_CUDA_SOURCES src/cuda_miner.c)
+    set_source_files_properties(src/cuda_miner.c PROPERTIES
+        COMPILE_OPTIONS "-Wno-overlength-strings"
+    )
+    message(STATUS "CUDA driver backend will be built with runtime driver loading")
 endif()
 
 function(btcrig_apply_c_warnings target optimization)
@@ -157,11 +190,20 @@ endfunction()
 function(btcrig_link_opencl target)
     if(BTCRIG_OPENCL_ENABLED)
         target_compile_definitions(${target} PRIVATE BTC_MINER_OPENCL)
-        if(TARGET OpenCL::OpenCL)
-            target_link_libraries(${target} PRIVATE OpenCL::OpenCL)
-        else()
-            target_include_directories(${target} PRIVATE ${OpenCL_INCLUDE_DIRS})
-            target_link_libraries(${target} PRIVATE ${OpenCL_LIBRARIES})
+        if(BTCRIG_OPENCL_INCLUDE_DIRS)
+            target_include_directories(${target} PRIVATE ${BTCRIG_OPENCL_INCLUDE_DIRS})
+        endif()
+        if(CMAKE_DL_LIBS)
+            target_link_libraries(${target} PRIVATE ${CMAKE_DL_LIBS})
+        endif()
+    endif()
+endfunction()
+
+function(btcrig_link_cuda target)
+    if(BTCRIG_CUDA_ENABLED)
+        target_compile_definitions(${target} PRIVATE BTC_MINER_CUDA)
+        if(CMAKE_DL_LIBS)
+            target_link_libraries(${target} PRIVATE ${CMAKE_DL_LIBS})
         endif()
     endif()
 endfunction()
@@ -176,12 +218,17 @@ add_executable(btc_bench
     src/main.c
     src/console.c
     src/cpu_info.c
+    src/miner.c
     ${BTC_MINER_SHA256D_SOURCES}
+    ${BTCRIG_OPENCL_SOURCES}
+    ${BTCRIG_CUDA_SOURCES}
 )
 
 btcrig_apply_c_warnings(btc_bench -O3)
 btcrig_apply_generated_include(btc_bench)
 btcrig_apply_sha_backend(btc_bench)
+btcrig_link_opencl(btc_bench)
+btcrig_link_cuda(btc_bench)
 
 target_link_libraries(btc_bench PRIVATE
     OpenSSL::Crypto
@@ -197,12 +244,14 @@ add_executable(btc_stratum
     src/miner.c
     ${BTC_MINER_SHA256D_SOURCES}
     ${BTCRIG_OPENCL_SOURCES}
+    ${BTCRIG_CUDA_SOURCES}
 )
 
 btcrig_apply_c_warnings(btc_stratum -O3)
 btcrig_apply_generated_include(btc_stratum)
 btcrig_apply_sha_backend(btc_stratum)
 btcrig_link_opencl(btc_stratum)
+btcrig_link_cuda(btc_stratum)
 
 target_link_libraries(btc_stratum PRIVATE
     OpenSSL::SSL
@@ -228,3 +277,8 @@ target_link_libraries(btc_proxy PRIVATE
 )
 
 btcrig_link_windows_sockets(btc_proxy)
+
+enable_testing()
+add_test(NAME btc_stratum_self_test COMMAND btc_stratum --self-test)
+add_test(NAME btc_bench_version COMMAND btc_bench --version)
+add_test(NAME btc_proxy_version COMMAND btc_proxy --version)

@@ -5,6 +5,7 @@ BTC_URL="${BTC_URL:-https://github.com/lxzcl/BTCRig/archive/refs/heads/master.zi
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/BTCRig}"
 BTCRIG_NATIVE="${BTCRIG_NATIVE:-OFF}"
 BTCRIG_OPENCL="${BTCRIG_OPENCL:-OFF}"
+BTCRIG_CUDA="${BTCRIG_CUDA:-OFF}"
 BTCRIG_RUN="${BTCRIG_RUN:-1}"
 
 pkg update
@@ -108,7 +109,8 @@ build_with_cmake() {
     cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DBTC_MINER_NATIVE="${BTCRIG_NATIVE}" \
-        -DBTCRIG_OPENCL="${BTCRIG_OPENCL}"
+        -DBTCRIG_OPENCL="${BTCRIG_OPENCL}" \
+        -DBTCRIG_CUDA="${BTCRIG_CUDA}"
     cmake --build build -j"${jobs}"
 }
 
