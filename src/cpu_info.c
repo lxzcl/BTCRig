@@ -63,6 +63,110 @@ static void set_fallback(cpu_info_t *info) {
 #endif
 }
 
+static int compare_cpu_entries(const void *left, const void *right) {
+    const cpu_info_entry_t *a = (const cpu_info_entry_t *)left;
+    const cpu_info_entry_t *b = (const cpu_info_entry_t *)right;
+    return a->id - b->id;
+}
+
+#if defined(_WIN32)
+static int windows_cpu_group_offset(WORD group) {
+    int offset = 0;
+    for (WORD g = 0; g < group; ++g) {
+        offset += (int)GetActiveProcessorCount(g);
+    }
+    return offset;
+}
+
+static int windows_mask_bit_count(KAFFINITY mask) {
+    int count = 0;
+    while (mask != 0) {
+        count += (int)(mask & 1U);
+        mask >>= 1U;
+    }
+    return count;
+}
+
+static void finalize_windows_info(cpu_info_t *info) {
+    info->logical_count = info->entry_count;
+    info->physical_count = info->physical_count > 0 ? info->physical_count : info->logical_count;
+    info->has_smt = info->logical_count > info->physical_count;
+    info->recommended_threads = info->logical_count > 0 ? info->logical_count : 1;
+    copy_text(info->source, sizeof(info->source), "windows-glpi");
+}
+
+static int detect_windows(cpu_info_t *info) {
+    DWORD bytes = 0;
+    if (GetLogicalProcessorInformationEx(RelationProcessorCore, NULL, &bytes) ||
+        GetLastError() != ERROR_INSUFFICIENT_BUFFER ||
+        bytes == 0) {
+        return -1;
+    }
+
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *buffer = malloc(bytes);
+    if (buffer == NULL) {
+        return -1;
+    }
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, buffer, &bytes)) {
+        free(buffer);
+        return -1;
+    }
+
+    memset(info, 0, sizeof(*info));
+    BYTE *ptr = (BYTE *)buffer;
+    BYTE *end = ptr + bytes;
+    int core_id = 0;
+    while (ptr < end && info->entry_count < CPU_INFO_MAX_CPUS) {
+        SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *item = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *)ptr;
+        if (item->Size == 0 || ptr + item->Size > end) {
+            break;
+        }
+        if (item->Relationship == RelationProcessorCore) {
+            PROCESSOR_RELATIONSHIP *rel = &item->Processor;
+            for (WORD group = 0; group < rel->GroupCount && info->entry_count < CPU_INFO_MAX_CPUS; ++group) {
+                KAFFINITY mask = rel->GroupMask[group].Mask;
+                int offset = windows_cpu_group_offset(rel->GroupMask[group].Group);
+                for (int bit = 0; mask != 0 && info->entry_count < CPU_INFO_MAX_CPUS; ++bit, mask >>= 1U) {
+                    if ((mask & 1U) == 0) {
+                        continue;
+                    }
+                    cpu_info_entry_t *entry = &info->entries[info->entry_count++];
+                    memset(entry, 0, sizeof(*entry));
+                    entry->id = offset + bit;
+                    entry->package_id = 0;
+                    entry->core_id = core_id;
+                    entry->capacity = rel->EfficiencyClass;
+                    snprintf(entry->thread_siblings,
+                             sizeof(entry->thread_siblings),
+                             "core%d",
+                             core_id);
+                }
+            }
+            int group_logical_count = 0;
+            for (WORD group = 0; group < rel->GroupCount; ++group) {
+                group_logical_count += windows_mask_bit_count(rel->GroupMask[group].Mask);
+            }
+            if (group_logical_count > 0) {
+                ++info->physical_count;
+                if (group_logical_count > 1 || (rel->Flags & LTP_PC_SMT) != 0) {
+                    info->has_smt = 1;
+                }
+                ++core_id;
+            }
+        }
+        ptr += item->Size;
+    }
+    free(buffer);
+
+    if (info->entry_count <= 0) {
+        return -1;
+    }
+    qsort(info->entries, (size_t)info->entry_count, sizeof(info->entries[0]), compare_cpu_entries);
+    finalize_windows_info(info);
+    return 0;
+}
+#endif
+
 #if defined(__linux__)
 static int parse_cpu_dir_name(const char *name) {
     if (name[0] != 'c' || name[1] != 'p' || name[2] != 'u' || !isdigit((unsigned char)name[3])) {
@@ -187,12 +291,6 @@ static int same_affinity_group(const cpu_info_entry_t *a, const cpu_info_entry_t
     return same_physical_core(a, b);
 }
 
-static int compare_cpu_entries(const void *left, const void *right) {
-    const cpu_info_entry_t *a = (const cpu_info_entry_t *)left;
-    const cpu_info_entry_t *b = (const cpu_info_entry_t *)right;
-    return a->id - b->id;
-}
-
 static void finalize_sysfs_info(cpu_info_t *info) {
     int physical = 0;
     int smt = 0;
@@ -263,6 +361,9 @@ void cpu_info_detect(cpu_info_t *info) {
     }
 
     set_fallback(info);
+#if defined(_WIN32)
+    (void)detect_windows(info);
+#endif
 #if defined(__linux__)
     (void)detect_sysfs(info);
 #endif
@@ -397,6 +498,13 @@ void cpu_info_print(const cpu_info_t *info) {
 
     int affinity[CPU_INFO_MAX_CPUS];
     int affinity_count = cpu_info_affinity_plan(info, affinity, CPU_INFO_MAX_CPUS);
+    int print_capacity = 0;
+    for (int i = 0; i < info->entry_count; ++i) {
+        if (info->entries[i].capacity > 0) {
+            print_capacity = 1;
+            break;
+        }
+    }
 
     printf("%s[CPU]%s source=%s logical=%d physical=%d smt=%s recommended=%d\n",
            C_BRIGHT_CYAN,
@@ -428,7 +536,7 @@ void cpu_info_print(const cpu_info_t *info) {
         if (entry->max_freq_khz > 0) {
             printf(" max=%ldMHz", entry->max_freq_khz / 1000);
         }
-        if (entry->capacity > 0) {
+        if (print_capacity) {
             printf(" capacity=%ld", entry->capacity);
         }
         printf("\n");
