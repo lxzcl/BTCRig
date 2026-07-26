@@ -196,11 +196,14 @@ else
     build_with_clang
 fi
 
-./build/btc_stratum --self-test
+cp -f config.json build/config.json
+
+(cd build && ./btc_stratum --self-test)
 
 echo "Installed to ${INSTALL_DIR}"
 if [ "${BTCRIG_RUN}" = "0" ] || [ "${BTCRIG_RUN}" = "OFF" ] || [ "${BTCRIG_RUN}" = "off" ]; then
     exit 0
 fi
 
-exec ./build/btc_stratum "$@"
+cd build
+exec ./btc_stratum "$@"
