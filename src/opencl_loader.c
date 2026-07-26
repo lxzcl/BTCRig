@@ -70,24 +70,22 @@ static int open_library(void) {
         try_open_library("OpenCL.framework/OpenCL");
     }
 #else
-    if (try_open_library("libOpenCL.so.1") != 0 &&
-        try_open_library("libOpenCL.so") != 0) {
 #if defined(__ANDROID__)
-        static const char *const android_opencl_names[] = {
-            "/system_ext/lib64/libOpenCL_system.so",
-            "/system_ext/lib/libOpenCL_system.so",
-            "/vendor/lib64/libOpenCL.so",
-            "/vendor/lib/libOpenCL.so",
-            "/system/vendor/lib64/libOpenCL.so",
-            "/system/vendor/lib/libOpenCL.so",
-            NULL
-        };
-        for (int i = 0; android_opencl_names[i] != NULL; ++i) {
-            if (try_open_library(android_opencl_names[i]) == 0) {
-                break;
-            }
-        }
+    static const char *const android_opencl_names[] = {
+        "/system_ext/lib64/libOpenCL_system.so",
+        "/system_ext/lib/libOpenCL_system.so",
+        "/vendor/lib64/libOpenCL.so",
+        "/vendor/lib/libOpenCL.so",
+        "/system/vendor/lib64/libOpenCL.so",
+        "/system/vendor/lib/libOpenCL.so",
+        NULL
+    };
+    for (int i = 0; g_opencl.library == NULL && android_opencl_names[i] != NULL; ++i) {
+        try_open_library(android_opencl_names[i]);
+    }
 #endif
+    if (g_opencl.library == NULL && try_open_library("libOpenCL.so.1") != 0) {
+        try_open_library("libOpenCL.so");
     }
 #endif
     if (g_opencl.library == NULL) {
