@@ -47,6 +47,7 @@
 #define DEFAULT_AUTOTUNE_SECONDS 1.5
 #define AUTOTUNE_MAX_RESULTS 96
 #define AUTOTUNE_MAX_CPU_THREAD_CANDIDATES 8
+#define AUTOTUNE_SELECT_CLOSE_RATIO 0.90
 
 static char stdout_buffer[1024 * 1024];
 static char stderr_buffer[64 * 1024];
@@ -1621,6 +1622,21 @@ static const char *autotune_cuda_mode_name(const miner_cuda_config_t *cuda) {
     return cuda != NULL && cuda->enabled ? "single" : "off";
 }
 
+static int autotune_result_priority(const autotune_result_t *result) {
+    int has_cpu = result != NULL && result->cpu_threads > 0;
+    int has_gpu = result != NULL && (result->opencl.enabled || result->cuda.enabled);
+    if (has_gpu && !has_cpu) {
+        return 0;
+    }
+    if (has_cpu && !has_gpu) {
+        return 1;
+    }
+    if (has_cpu && has_gpu) {
+        return 2;
+    }
+    return 3;
+}
+
 static int autotune_append_result(autotune_result_t *results,
                                   int *count,
                                   const char *name,
@@ -2058,6 +2074,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     }
 #endif
 
+    const autotune_result_t *fastest = NULL;
     const autotune_result_t *best = NULL;
     int cpu_autotune_ok = 0;
     int gpu_autotune_ok = 0;
@@ -2071,13 +2088,37 @@ static int run_autotune(app_config_t *config, const char *config_path) {
         if (results[i].opencl.enabled || results[i].cuda.enabled) {
             gpu_autotune_ok = 1;
         }
-        if (best == NULL || results[i].hashrate > best->hashrate) {
+        if (fastest == NULL || results[i].hashrate > fastest->hashrate) {
+            fastest = &results[i];
+        }
+    }
+    if (fastest == NULL) {
+        fprintf(stderr, "%s[AUTOTUNE]%s no working mining mode found\n", C_BRIGHT_RED, C_RESET);
+        return -1;
+    }
+    double close_floor = fastest->hashrate * AUTOTUNE_SELECT_CLOSE_RATIO;
+    for (int i = 0; i < result_count; ++i) {
+        if (!results[i].ok || results[i].hashrate < close_floor) {
+            continue;
+        }
+        if (best == NULL ||
+            autotune_result_priority(&results[i]) < autotune_result_priority(best) ||
+            (autotune_result_priority(&results[i]) == autotune_result_priority(best) &&
+             results[i].hashrate > best->hashrate)) {
             best = &results[i];
         }
     }
-    if (best == NULL) {
-        fprintf(stderr, "%s[AUTOTUNE]%s no working mining mode found\n", C_BRIGHT_RED, C_RESET);
-        return -1;
+    if (best != fastest) {
+        printf("%s[AUTOTUNE]%s preferred mode=%s%s%s over fastest=%s%s%s within %.1f%% margin\n",
+               C_YELLOW,
+               C_RESET,
+               C_BRIGHT_GREEN,
+               best->name,
+               C_RESET,
+               C_BRIGHT_YELLOW,
+               fastest->name,
+               C_RESET,
+               (1.0 - AUTOTUNE_SELECT_CLOSE_RATIO) * 100.0);
     }
 
     config->cpu_enabled = best->cpu_threads > 0 ? 1 : 0;
