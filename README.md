@@ -31,7 +31,8 @@ These are observed project measurements, not controlled cross-platform benchmark
 | NVIDIA GeForce RTX 2050 Laptop GPU | Windows 11 / MSYS2 UCRT64 | CUDA driver API | 1 GPU | ~589 MH/s |
 | NVIDIA GeForce RTX 2050 Laptop GPU | Windows 11 / MSYS2 UCRT64 | OpenCL modern-unrolled | 1 GPU | ~536 MH/s |
 | AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | ~600 MH/s |
-| Snapdragon 8 Elite | Termux | ARMv8 SHA2 | 8 | ~150 MH/s |
+| Odin3 / Adreno 830 | Termux / Android 15 | OpenCL modern-fixed-npi4 | 1 GPU | ~272 MH/s |
+| Odin3 / Snapdragon 8 Elite | Termux / Android 15 | ARMv8 SHA2 | 8 | ~160 MH/s |
 | NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.4 MH/s |
 | NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.3 MH/s |
 | RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | ~8 MH/s |
@@ -141,7 +142,7 @@ cmake --build build -j"$(nproc)"
 ./build/btc_stratum --cuda
 ```
 
-OpenCL is enabled by default in the packaged `config.json`. Building with `-DBTCRIG_OPENCL=ON` only includes the GPU worker; the OpenCL runtime is loaded dynamically, so CPU-only startup still works when `OpenCL.dll` or `libOpenCL.so.1` is missing.
+OpenCL is enabled by default in the packaged `config.json`. Building with `-DBTCRIG_OPENCL=ON` only includes the GPU worker; the OpenCL runtime is loaded dynamically, so CPU-only startup still works when `OpenCL.dll` or `libOpenCL.so.1` is missing. Set `BTCRIG_OPENCL_LIBRARY=/path/to/libOpenCL.so` to prefer a non-standard runtime; Android builds also try the system OpenCL shim used by recent vendor drivers.
 
 CUDA is also disabled by default in `config.json`. Building with `-DBTCRIG_CUDA=ON` includes the CUDA worker and `btc_bench --cuda`; runtime only needs an NVIDIA driver that provides `nvcuda.dll` on Windows or `libcuda.so.1` on Linux. The CUDA Toolkit is only needed if you want to regenerate `src/cuda_sha256d_ptx.h` with `tools/generate_cuda_ptx.sh`. Use `tools/analyze_cuda_ptx.sh sm_86` to inspect PTX-level register and instruction counts for the embedded CUDA kernels.
 

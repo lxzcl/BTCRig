@@ -75,4 +75,7 @@ fastest mode and CPU/GPU autotune completion flags to config.json. Use
 `btc_stratum --opencl-self-test` or `btc_stratum --cuda-self-test` to verify GPU
 kernels without connecting to a pool, or `btc_stratum --autotune` to rerun the
 benchmark after changing drivers or hardware.
+Set `BTCRIG_OPENCL_LIBRARY=/path/to/libOpenCL.so` when the runtime is installed
+under a non-standard name. On Termux, `BTCRIG_OPENCL=ON ./termux.sh` installs the
+headers and OpenCL ICD/vendor bridge packages.
 ```

@@ -31,7 +31,8 @@ BTCRig 是一个跨平台 C 项目，提供 SHA256d 基准、Stratum V1 挖矿�
 | NVIDIA GeForce RTX 2050 Laptop GPU | Windows 11 / MSYS2 UCRT64 | CUDA Driver API | 1 GPU | 约 589 MH/s |
 | NVIDIA GeForce RTX 2050 Laptop GPU | Windows 11 / MSYS2 UCRT64 | OpenCL modern-unrolled | 1 GPU | 约 536 MH/s |
 | AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | 约 600 MH/s |
-| 骁龙 8 Elite | Termux | ARMv8 SHA2 | 8 | 约 150 MH/s |
+| Odin3 / Adreno 830 | Termux / Android 15 | OpenCL modern-fixed-npi4 | 1 GPU | 约 272 MH/s |
+| Odin3 / 骁龙 8 Elite | Termux / Android 15 | ARMv8 SHA2 | 8 | 约 160 MH/s |
 | NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.4 MH/s |
 | NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.3 MH/s |
 | RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | 约8 MH/s |
@@ -141,7 +142,7 @@ cmake --build build -j"$(nproc)"
 ./build/btc_stratum --cuda
 ```
 
-随包 `config.json` 默认开启 OpenCL。`-DBTCRIG_OPENCL=ON` 只表示把 GPU worker 编译进程序；OpenCL runtime 会动态加载，所以缺少 `OpenCL.dll` 或 `libOpenCL.so.1` 时仍可正常 CPU-only 启动。
+随包 `config.json` 默认开启 OpenCL。`-DBTCRIG_OPENCL=ON` 只表示把 GPU worker 编译进程序；OpenCL runtime 会动态加载，所以缺少 `OpenCL.dll` 或 `libOpenCL.so.1` 时仍可正常 CPU-only 启动。可以用 `BTCRIG_OPENCL_LIBRARY=/path/to/libOpenCL.so` 指定非标准 runtime；Android 构建也会尝试新系统常见的 OpenCL shim。
 
 `config.json` 默认也关闭 CUDA。`-DBTCRIG_CUDA=ON` 会编译 CUDA worker 和 `btc_bench --cuda`；运行时只需要 NVIDIA 驱动提供 Windows 上的 `nvcuda.dll` 或 Linux 上的 `libcuda.so.1`。只有需要用 `tools/generate_cuda_ptx.sh` 重新生成 `src/cuda_sha256d_ptx.h` 时，才需要 CUDA Toolkit 或能编译 CUDA device code 的 clang。可以用 `tools/analyze_cuda_ptx.sh sm_86` 查看内嵌 CUDA kernel 的 PTX 级寄存器和指令计数。
 
