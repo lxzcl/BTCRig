@@ -232,6 +232,28 @@ jobs:
           path: release-artifacts
           merge-multiple: true
 
+      - name: Write release notes
+        if: steps.release_trigger.outputs.publish == 'true'
+        shell: bash
+        run: |
+          cat > release-notes.md <<EOF
+          Automated packaged builds for BTCRig ${{ steps.version.outputs.tag }}.
+
+          ## Highlights
+
+          - Release packages are built for Linux x86_64 and Windows UCRT64.
+          - Release notes now include this curated summary before GitHub's generated changelog.
+
+          ## Package contents
+
+          - btc_stratum
+          - btc_proxy
+          - btc_bench
+          - config.json
+          - proxy.json
+          - README, LICENSE, VERSION
+          EOF
+
       - name: Publish GitHub Release
         if: steps.release_trigger.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
@@ -239,16 +261,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: BTCRig ${{ steps.version.outputs.tag }}
-          body: |
-            Automated packaged builds for BTCRig ${{ steps.version.outputs.tag }}.
-
-            Package contents:
-            - btc_stratum
-            - btc_proxy
-            - btc_bench
-            - config.json
-            - proxy.json
-            - README, LICENSE, VERSION
+          body_path: release-notes.md
           files: release-artifacts/*
           fail_on_unmatched_files: true
           generate_release_notes: true
