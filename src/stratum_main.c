@@ -46,6 +46,7 @@
 #define DEFAULT_STATS_INTERVAL 5.0
 #define DEFAULT_AUTOTUNE_SECONDS 1.5
 #define AUTOTUNE_MAX_RESULTS 64
+#define AUTOTUNE_MAX_CPU_THREAD_CANDIDATES 8
 
 static char stdout_buffer[1024 * 1024];
 static char stderr_buffer[64 * 1024];
@@ -328,6 +329,44 @@ static int retry_delay_seconds(int base_delay, unsigned long attempt) {
 
 static int default_thread_count(void) {
     return cpu_info_recommended_threads();
+}
+
+static int int_value_seen(const int *values, int count, int value) {
+    for (int i = 0; i < count; ++i) {
+        if (values[i] == value) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int autotune_cpu_thread_candidates(int full_threads, int *out, int max_count) {
+    if (full_threads <= 0 || out == NULL || max_count <= 0) {
+        return 0;
+    }
+
+    const int raw[] = {
+        full_threads,
+        full_threads - 1,
+        (full_threads * 3 + 3) / 4,
+        (full_threads * 2 + 2) / 3,
+        full_threads / 2,
+        1,
+    };
+    int count = 0;
+    for (size_t i = 0; i < sizeof(raw) / sizeof(raw[0]) && count < max_count; ++i) {
+        int value = raw[i];
+        if (value < 1) {
+            continue;
+        }
+        if (value > full_threads) {
+            value = full_threads;
+        }
+        if (!int_value_seen(out, count, value)) {
+            out[count++] = value;
+        }
+    }
+    return count;
 }
 
 static void copy_string(char *dst, size_t dst_size, const char *src) {
@@ -1632,6 +1671,28 @@ static int autotune_append_result(autotune_result_t *results,
     return 0;
 }
 
+static void autotune_append_cpu_thread_results(autotune_result_t *results,
+                                               int *result_count,
+                                               const char *base_name,
+                                               int full_threads,
+                                               const miner_opencl_config_t *opencl,
+                                               const miner_cuda_config_t *cuda,
+                                               double seconds) {
+    int candidates[AUTOTUNE_MAX_CPU_THREAD_CANDIDATES];
+    int count = autotune_cpu_thread_candidates(full_threads, candidates, AUTOTUNE_MAX_CPU_THREAD_CANDIDATES);
+    for (int i = 0; i < count; ++i) {
+        char name[96];
+        if (candidates[i] == full_threads) {
+            copy_string(name, sizeof(name), base_name);
+        } else {
+            snprintf(name, sizeof(name), "%s-%d", base_name, candidates[i]);
+        }
+        if (autotune_append_result(results, result_count, name, candidates[i], opencl, cuda, seconds) != 0) {
+            return;
+        }
+    }
+}
+
 static json_t *json_object_get_or_create(json_t *parent, const char *key) {
     json_t *value = json_object_get(parent, key);
     if (json_is_object(value)) {
@@ -1842,7 +1903,13 @@ static int run_autotune(app_config_t *config, const char *config_path) {
     autotune_disable_opencl(&cpu_only_opencl);
     autotune_disable_cuda(&cpu_only_cuda);
     if (full_threads > 0) {
-        autotune_append_result(results, &result_count, "cpu", full_threads, &cpu_only_opencl, &cpu_only_cuda, seconds);
+        autotune_append_cpu_thread_results(results,
+                                           &result_count,
+                                           "cpu",
+                                           full_threads,
+                                           &cpu_only_opencl,
+                                           &cpu_only_cuda,
+                                           seconds);
     }
 
 #if defined(BTC_MINER_OPENCL)
@@ -1854,7 +1921,6 @@ static int run_autotune(app_config_t *config, const char *config_path) {
         miner_opencl_config_t all_gpu_opencl;
         miner_opencl_device_config_t resolved[MINER_OPENCL_MAX_DEVICES];
         int resolved_count = 0;
-        int half_threads = full_threads > 2 ? full_threads / 2 : (full_threads > 1 ? 1 : full_threads);
         char error[2048];
         error[0] = '\0';
 
@@ -1878,16 +1944,13 @@ static int run_autotune(app_config_t *config, const char *config_path) {
 
             autotune_append_result(results, &result_count, "all-gpu", 0, &all_gpu_opencl, &cpu_only_cuda, seconds);
             if (full_threads > 0) {
-                autotune_append_result(results, &result_count, "cpu+all-gpu", full_threads, &all_gpu_opencl, &cpu_only_cuda, seconds);
-                if (half_threads > 0 && half_threads != full_threads) {
-                    autotune_append_result(results,
-                                           &result_count,
-                                           "half-cpu+all-gpu",
-                                           half_threads,
-                                           &all_gpu_opencl,
-                                           &cpu_only_cuda,
-                                           seconds);
-                }
+                autotune_append_cpu_thread_results(results,
+                                                   &result_count,
+                                                   "cpu+all-gpu",
+                                                   full_threads,
+                                                   &all_gpu_opencl,
+                                                   &cpu_only_cuda,
+                                                   seconds);
             }
 
             for (int i = 0; i < resolved_count; ++i) {
@@ -1947,28 +2010,18 @@ static int run_autotune(app_config_t *config, const char *config_path) {
                C_RESET);
     } else {
         miner_cuda_config_t cuda_config = config->cuda;
-        int half_threads = full_threads > 2 ? full_threads / 2 : (full_threads > 1 ? 1 : full_threads);
         cuda_config.enabled = 1;
         autotune_cuda_params(&cuda_config, seconds);
 
         autotune_append_result(results, &result_count, "cuda", 0, &cpu_only_opencl, &cuda_config, seconds);
         if (full_threads > 0) {
-            autotune_append_result(results,
-                                   &result_count,
-                                   "cpu+cuda",
-                                   full_threads,
-                                   &cpu_only_opencl,
-                                   &cuda_config,
-                                   seconds);
-            if (half_threads > 0 && half_threads != full_threads) {
-                autotune_append_result(results,
-                                       &result_count,
-                                       "half-cpu+cuda",
-                                       half_threads,
-                                       &cpu_only_opencl,
-                                       &cuda_config,
-                                       seconds);
-            }
+            autotune_append_cpu_thread_results(results,
+                                               &result_count,
+                                               "cpu+cuda",
+                                               full_threads,
+                                               &cpu_only_opencl,
+                                               &cuda_config,
+                                               seconds);
         }
     }
 #else

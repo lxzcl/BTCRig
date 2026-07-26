@@ -323,7 +323,7 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 
 CPU、OpenCL 和 CUDA worker 共用一个 nonce 分配器，因此不会扫描重叠 nonce。纯 CPU 模式下 CPU worker 使用较大的 nonce 块；只要存在 GPU worker，CPU worker 会自动切换为较小块，而 GPU worker 继续使用配置中的 `batch-size`。新 job、暂停/恢复和停止会直接唤醒等待中的 worker，不再只依赖周期性轮询。
 
-默认配置中 `autotune.enabled=true`、`autotune.cpu-self-test=false` 且 `autotune.gpu-self-test=false`。第一次正常挖矿启动时，程序会先离线运行 self-test 和基准测试，再连接矿池。CPU 和 GPU 的完成标记会分开记录：只运行 CPU 时只会把 `cpu-self-test` 改成 `true`，之后再启用 OpenCL 或 CUDA 仍会触发 GPU 调优，并保留已有 CPU 结果。当 `config.json` 中 `opencl.enabled=true`、`cuda.enabled=true`，或者命令行传入对应 GPU 参数时，自动调优会测试 GPU 模式；随包配置默认开启 OpenCL。如果两个 GPU 后端都关闭，自动调优会保持 CPU-only。如果 OpenCL 已启用，它会先对每张 OpenCL GPU 分阶段测试 `backend`、`kernel`、`local-work-size`、`nonces-per-work-item` 和 `batch-size`，然后测试 CPU-only、全部 GPU、CPU+全部 GPU、半数 CPU+全部 GPU、每张单独 GPU、CPU+每张单独 GPU；如果机器有超过两张 GPU，还会测试“全部 GPU 去掉其中一张”的组合。如果 CUDA 已启用，会先预热选中的 NVIDIA 设备，调优 `kernel`、`threads-per-block`、`nonces-per-thread` 和 `batch-size`，再测试 CUDA-only、CPU+CUDA 和半数 CPU+CUDA。测试结束后会把最快模式和每种模式的算力写回 `config.json`。旧版 `autotune.self-test`、`self_test`、`done` 和 `completed` 字段仍会作为 CPU 完成标记兼容读取。
+默认配置中 `autotune.enabled=true`、`autotune.cpu-self-test=false` 且 `autotune.gpu-self-test=false`。第一次正常挖矿启动时，程序会先离线运行 self-test 和基准测试，再连接矿池。CPU 和 GPU 的完成标记会分开记录：只运行 CPU 时只会把 `cpu-self-test` 改成 `true`，之后再启用 OpenCL 或 CUDA 仍会触发 GPU 调优，并保留已有 CPU 结果。当 `config.json` 中 `opencl.enabled=true`、`cuda.enabled=true`，或者命令行传入对应 GPU 参数时，自动调优会测试 GPU 模式；随包配置默认开启 OpenCL。如果两个 GPU 后端都关闭，自动调优会保持 CPU-only。CPU 模式会在配置上限内测试一组小候选：满线程、满线程减 1、3/4、2/3、半数和 1 线程。如果 OpenCL 已启用，它会先对每张 OpenCL GPU 分阶段测试 `backend`、`kernel`、`local-work-size`、`nonces-per-work-item` 和 `batch-size`，然后测试 CPU-only 候选、全部 GPU、CPU+全部 GPU 候选、每张单独 GPU、CPU+每张单独 GPU；如果机器有超过两张 GPU，还会测试“全部 GPU 去掉其中一张”的组合。如果 CUDA 已启用，会先预热选中的 NVIDIA 设备，调优 `kernel`、`threads-per-block`、`nonces-per-thread` 和 `batch-size`，再测试 CUDA-only 和 CPU+CUDA 候选。测试结束后会把最快模式和每种模式的算力写回 `config.json`。旧版 `autotune.self-test`、`self_test`、`done` 和 `completed` 字段仍会作为 CPU 完成标记兼容读取。
 
 这里故意不穷举所有 CPU/GPU 子集。高价值组合已经能覆盖常见情况：独显加核显、CPU 线程和 GPU 驱动抢资源、某张慢卡或不稳定卡拖累整体。换驱动、改频率、换硬件，或调整 OpenCL batch/local/npi、CUDA kernel/batch/block/npt 后，可以用 `--autotune` 重新测试。
 
@@ -342,6 +342,12 @@ CPU、OpenCL 和 CUDA worker 共用一个 nonce 分配器，因此不会扫描�
 
 ```bash
 BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
+```
+
+可以用 CPU sweep 对比线程数，并观察每个 worker 的算力差异：
+
+```bash
+./build/btc_bench --cpu-sweep --repeat 3 --per-thread -t "$(nproc)" -s 2
 ```
 
 OpenCL 可以通过 `config.json` 或命令行启用：
