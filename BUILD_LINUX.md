@@ -52,7 +52,7 @@ Installer environment variables:
 BTC_URL         source zip URL, defaults to the master branch archive
 INSTALL_DIR     install directory, defaults to ~/BTCRig
 BTCRIG_NATIVE   ON/OFF native CPU tuning, Ubuntu default ON, Termux default OFF
-BTCRIG_OPENCL   ON/OFF OpenCL backend, Ubuntu default ON, Termux default OFF
+BTCRIG_OPENCL   ON/OFF OpenCL backend, Ubuntu default ON, Termux default ON
 BTCRIG_CUDA     ON/OFF CUDA driver backend, Ubuntu default ON, Termux default OFF
 BTCRIG_RUN      1 runs btc_stratum after build, 0 only builds
 ```
@@ -76,6 +76,7 @@ fastest mode and CPU/GPU autotune completion flags to config.json. Use
 kernels without connecting to a pool, or `btc_stratum --autotune` to rerun the
 benchmark after changing drivers or hardware.
 Set `BTCRIG_OPENCL_LIBRARY=/path/to/libOpenCL.so` when the runtime is installed
-under a non-standard name. On Termux, `BTCRIG_OPENCL=ON ./termux.sh` installs the
-headers and OpenCL ICD/vendor bridge packages.
+under a non-standard name. On Termux, `./termux.sh` installs the headers and
+OpenCL ICD/vendor bridge packages by default; use `BTCRIG_OPENCL=OFF ./termux.sh`
+for CPU-only builds.
 ```

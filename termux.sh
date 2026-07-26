@@ -4,7 +4,7 @@ set -Eeuo pipefail
 BTC_URL="${BTC_URL:-https://github.com/lxzcl/BTCRig/archive/refs/heads/master.zip}"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/BTCRig}"
 BTCRIG_NATIVE="${BTCRIG_NATIVE:-OFF}"
-BTCRIG_OPENCL="${BTCRIG_OPENCL:-OFF}"
+BTCRIG_OPENCL="${BTCRIG_OPENCL:-ON}"
 BTCRIG_CUDA="${BTCRIG_CUDA:-OFF}"
 BTCRIG_RUN="${BTCRIG_RUN:-1}"
 
