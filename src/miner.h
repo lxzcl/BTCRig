@@ -117,6 +117,7 @@ miner_t *miner_create_with_options(int thread_count, const miner_opencl_config_t
 miner_t *miner_create_with_backend_options(int thread_count,
                                            const miner_opencl_config_t *opencl_config,
                                            const miner_cuda_config_t *cuda_config);
+void miner_set_cpu_affinity(miner_t *miner, int enabled);
 void miner_destroy(miner_t *miner);
 int miner_start(miner_t *miner);
 void miner_stop(miner_t *miner);

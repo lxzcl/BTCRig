@@ -17,6 +17,7 @@ on:
       - "src/**"
       - "CMakeLists.txt"
       - "VERSION"
+      - "tools/**"
       - "*.sh"
       - "*.json"
       - "README*.md"

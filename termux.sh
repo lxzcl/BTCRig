@@ -11,6 +11,9 @@ BTCRIG_RUN="${BTCRIG_RUN:-1}"
 pkg update
 pkg upgrade -y
 pkg install -y clang make cmake jsoncpp git openssl openssl-tool pkg-config libjansson wget unzip
+if [ "${BTCRIG_OPENCL}" != "OFF" ] && [ "${BTCRIG_OPENCL}" != "off" ] && [ "${BTCRIG_OPENCL}" != "0" ]; then
+    pkg install -y opencl-headers ocl-icd opencl-vendor-driver
+fi
 
 ensure_cmake_works() {
     if cmake --version >/dev/null 2>&1; then

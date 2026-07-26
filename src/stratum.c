@@ -1321,6 +1321,9 @@ int stratum_run_client(const char *url,
         const miner_opencl_config_t *opencl_config = config != NULL ? &config->opencl : NULL;
         const miner_cuda_config_t *cuda_config = config != NULL ? &config->cuda : NULL;
         miner = miner_create_with_backend_options(thread_count, opencl_config, cuda_config);
+        if (config != NULL) {
+            miner_set_cpu_affinity(miner, config->cpu_affinity);
+        }
         if (miner == NULL || miner_start(miner) != 0) {
             fprintf(stderr, "%s[MINER]%s failed to start\n", C_BRIGHT_RED, C_RESET);
             miner_destroy(miner);

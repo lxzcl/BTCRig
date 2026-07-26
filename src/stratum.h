@@ -56,6 +56,7 @@ typedef struct {
 
 typedef struct {
     int thread_count;
+    int cpu_affinity;
     int enable_mining;
     miner_opencl_config_t opencl;
     miner_cuda_config_t cuda;

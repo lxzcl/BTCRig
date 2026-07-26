@@ -8,7 +8,8 @@
   },
   "cpu": {
     "enabled": true,
-    "threads": 0
+    "threads": 0,
+    "affinity": false
   },
   "opencl": {
     "enabled": true,

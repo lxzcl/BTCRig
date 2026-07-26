@@ -1,6 +1,7 @@
 #include "opencl_loader.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32)
@@ -45,21 +46,49 @@ static void clear_error(char *error, size_t error_size) {
     }
 }
 
-static int open_library(void) {
+static int try_open_library(const char *name) {
+    if (name == NULL || name[0] == '\0') {
+        return -1;
+    }
 #if defined(_WIN32)
-    g_opencl.library = LoadLibraryA("OpenCL.dll");
+    g_opencl.library = LoadLibraryA(name);
 #else
-#if defined(__APPLE__)
-    g_opencl.library = dlopen("/System/Library/Frameworks/OpenCL.framework/OpenCL", RTLD_NOW | RTLD_LOCAL);
-    if (g_opencl.library == NULL) {
-        g_opencl.library = dlopen("OpenCL.framework/OpenCL", RTLD_NOW | RTLD_LOCAL);
-    }
-#else
-    g_opencl.library = dlopen("libOpenCL.so.1", RTLD_NOW | RTLD_LOCAL);
-    if (g_opencl.library == NULL) {
-        g_opencl.library = dlopen("libOpenCL.so", RTLD_NOW | RTLD_LOCAL);
-    }
+    g_opencl.library = dlopen(name, RTLD_NOW | RTLD_LOCAL);
 #endif
+    return g_opencl.library != NULL ? 0 : -1;
+}
+
+static int open_library(void) {
+    const char *override = getenv("BTCRIG_OPENCL_LIBRARY");
+    if (try_open_library(override) == 0) {
+        return 0;
+    }
+#if defined(_WIN32)
+    try_open_library("OpenCL.dll");
+#elif defined(__APPLE__)
+    if (try_open_library("/System/Library/Frameworks/OpenCL.framework/OpenCL") != 0) {
+        try_open_library("OpenCL.framework/OpenCL");
+    }
+#else
+    if (try_open_library("libOpenCL.so.1") != 0 &&
+        try_open_library("libOpenCL.so") != 0) {
+#if defined(__ANDROID__)
+        static const char *const android_opencl_names[] = {
+            "/system_ext/lib64/libOpenCL_system.so",
+            "/system_ext/lib/libOpenCL_system.so",
+            "/vendor/lib64/libOpenCL.so",
+            "/vendor/lib/libOpenCL.so",
+            "/system/vendor/lib64/libOpenCL.so",
+            "/system/vendor/lib/libOpenCL.so",
+            NULL
+        };
+        for (int i = 0; android_opencl_names[i] != NULL; ++i) {
+            if (try_open_library(android_opencl_names[i]) == 0) {
+                break;
+            }
+        }
+#endif
+    }
 #endif
     if (g_opencl.library == NULL) {
         set_loader_error("OpenCL runtime library not found");

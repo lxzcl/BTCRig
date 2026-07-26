@@ -31,7 +31,8 @@ These are observed project measurements, not controlled cross-platform benchmark
 | NVIDIA GeForce RTX 2050 Laptop GPU | Windows 11 / MSYS2 UCRT64 | CUDA driver API | 1 GPU | ~589 MH/s |
 | NVIDIA GeForce RTX 2050 Laptop GPU | Windows 11 / MSYS2 UCRT64 | OpenCL modern-unrolled | 1 GPU | ~536 MH/s |
 | AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | ~600 MH/s |
-| Snapdragon 8 Elite | Termux | ARMv8 SHA2 | 8 | ~150 MH/s |
+| Odin3 / Adreno 830 | Termux / Android 15 | OpenCL modern-fixed-npi4 | 1 GPU | ~272 MH/s |
+| Odin3 / Snapdragon 8 Elite | Termux / Android 15 | ARMv8 SHA2 | 8 | ~160 MH/s |
 | NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.4 MH/s |
 | NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | ~46.3 MH/s |
 | RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | ~8 MH/s |
@@ -141,7 +142,7 @@ cmake --build build -j"$(nproc)"
 ./build/btc_stratum --cuda
 ```
 
-OpenCL is enabled by default in the packaged `config.json`. Building with `-DBTCRIG_OPENCL=ON` only includes the GPU worker; the OpenCL runtime is loaded dynamically, so CPU-only startup still works when `OpenCL.dll` or `libOpenCL.so.1` is missing.
+OpenCL is enabled by default in the packaged `config.json`. Building with `-DBTCRIG_OPENCL=ON` only includes the GPU worker; the OpenCL runtime is loaded dynamically, so CPU-only startup still works when `OpenCL.dll` or `libOpenCL.so.1` is missing. Set `BTCRIG_OPENCL_LIBRARY=/path/to/libOpenCL.so` to prefer a non-standard runtime; Android builds also try the system OpenCL shim used by recent vendor drivers.
 
 CUDA is also disabled by default in `config.json`. Building with `-DBTCRIG_CUDA=ON` includes the CUDA worker and `btc_bench --cuda`; runtime only needs an NVIDIA driver that provides `nvcuda.dll` on Windows or `libcuda.so.1` on Linux. The CUDA Toolkit is only needed if you want to regenerate `src/cuda_sha256d_ptx.h` with `tools/generate_cuda_ptx.sh`. Use `tools/analyze_cuda_ptx.sh sm_86` to inspect PTX-level register and instruction counts for the embedded CUDA kernels.
 
@@ -220,6 +221,8 @@ Common commands:
 -p, --pass PASS            password
 -d, --suggest-diff N       suggested initial difficulty
 -t, --threads N            CPU thread count, 0 means auto
+--cpu-affinity             bind CPU workers to the detected CPU order
+--no-cpu-affinity          disable CPU worker affinity
 --stats N                  statistics interval in seconds
 --runtime N                runtime limit, 0 means unlimited
 --retries N                reconnect attempts, -1 means infinite, 0 disables reconnect
@@ -276,7 +279,8 @@ Interactive keys while mining:
   },
   "cpu": {
     "enabled": true,
-    "threads": 0
+    "threads": 0,
+    "affinity": false
   },
   "opencl": {
     "enabled": true,
@@ -321,9 +325,9 @@ The pool controls the effective share difficulty through `mining.set_difficulty`
 
 OpenCL is enabled by default in the packaged config, while CUDA remains opt-in at runtime. If the build machine has OpenCL headers, `btc_stratum` includes the OpenCL worker by default; otherwise that path is skipped. OpenCL and CUDA are loaded through runtime driver loading, so enabling either GPU backend without a usable runtime/device prints a warning and keeps the CPU path available. When OpenCL is enabled and no specific device list is configured, all OpenCL GPU devices are used; CUDA currently uses one selected NVIDIA device.
 
-CPU, OpenCL, and CUDA workers share one nonce allocator, so ranges do not overlap. In CPU-only mode CPU workers use larger nonce chunks; when any GPU worker is active, CPU chunks are reduced while GPU workers keep their configured `batch-size`. New jobs, pause/resume, and shutdown wake waiting workers directly instead of relying on periodic polling.
+CPU, OpenCL, and CUDA workers share one nonce allocator, so ranges do not overlap. In CPU-only mode CPU workers use larger nonce chunks; when any GPU worker is active, CPU chunks are reduced while GPU workers keep their configured `batch-size`. When `cpu.affinity=true`, CPU workers are bound to the detected CPU order; on big.LITTLE systems this prefers higher-capacity cores first. New jobs, pause/resume, and shutdown wake waiting workers directly instead of relying on periodic polling.
 
-With the default `autotune.enabled=true`, `autotune.cpu-self-test=false`, and `autotune.gpu-self-test=false`, the first normal mining run performs an offline self-test and benchmark before connecting to the pool. CPU and GPU completion flags are tracked separately: a CPU-only run only sets `cpu-self-test=true`, so enabling OpenCL or CUDA later still triggers GPU tuning while preserving the CPU result. GPU modes are benchmarked when `opencl.enabled=true`, `cuda.enabled=true`, or the matching command-line option is passed; the packaged config enables OpenCL by default. If both GPU backends are disabled, autotune stays CPU-only and preserves both as disabled. If OpenCL is enabled, it first tunes each OpenCL GPU with staged `backend`, `kernel`, `local-work-size`, `nonces-per-work-item`, and `batch-size` probes, then measures CPU-only, all-GPU, CPU+all-GPU, half-CPU+all-GPU, each single GPU, CPU+each single GPU, and for systems with more than two GPUs the "all GPUs except one" cases. If CUDA is enabled, it warms the selected NVIDIA device, tunes `kernel`, `threads-per-block`, `nonces-per-thread`, and `batch-size`, then measures CUDA-only, CPU+CUDA, and half-CPU+CUDA. The fastest mode is written back to `config.json` together with the measured hashrates. Legacy `autotune.self-test`, `self_test`, `done`, and `completed` fields are still accepted as CPU completion flags for older configs.
+With the default `autotune.enabled=true`, `autotune.cpu-self-test=false`, and `autotune.gpu-self-test=false`, the first normal mining run performs an offline self-test and benchmark before connecting to the pool. CPU and GPU completion flags are tracked separately: a CPU-only run only sets `cpu-self-test=true`, so enabling OpenCL or CUDA later still triggers GPU tuning while preserving the CPU result. GPU modes are benchmarked when `opencl.enabled=true`, `cuda.enabled=true`, or the matching command-line option is passed; the packaged config enables OpenCL by default. If both GPU backends are disabled, autotune stays CPU-only and preserves both as disabled. CPU modes try a small thread-count set up to the configured maximum: full, full-1, 3/4, 2/3, half, and 1 thread, with CPU affinity tested on and off where supported. If OpenCL is enabled, it first tunes each OpenCL GPU with staged `backend`, `kernel`, `local-work-size`, `nonces-per-work-item`, and `batch-size` probes, then measures CPU-only candidates, all-GPU, CPU+all-GPU candidates, each single GPU, CPU+each single GPU, and for systems with more than two GPUs the "all GPUs except one" cases. If CUDA is enabled, it warms the selected NVIDIA device, tunes `kernel`, `threads-per-block`, `nonces-per-thread`, and `batch-size`, then measures CUDA-only and CPU+CUDA candidates. The fastest mode is written back to `config.json` together with the measured hashrates. Legacy `autotune.self-test`, `self_test`, `done`, and `completed` fields are still accepted as CPU completion flags for older configs.
 
 This deliberately avoids trying every possible CPU/GPU subset. The high-value modes catch the common cases: a discrete GPU plus an integrated GPU, CPU contention with the GPU driver, and one slow or unstable GPU dragging down the group. Use `--autotune` to rerun the benchmark after changing drivers, clocks, hardware, OpenCL batch/local/npi settings, or CUDA kernel/batch/block/npt settings.
 
@@ -342,6 +346,12 @@ Override automatic selection with `BTC_MINER_SHA_BACKEND`, for example:
 
 ```bash
 BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
+```
+
+Use CPU sweep mode to compare thread counts and spot uneven worker rates:
+
+```bash
+./build/btc_bench --cpu-sweep --repeat 3 --per-thread --affinity -t "$(nproc)" -s 2
 ```
 
 OpenCL can be enabled from `config.json` or from the command line:

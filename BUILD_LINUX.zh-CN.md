@@ -46,4 +46,6 @@ CPU-only 矿工。OpenCL 和 CUDA 都会从 GPU 驱动动态加载，只有设�
 config.json。可以用 `btc_stratum --opencl-self-test` 或
 `btc_stratum --cuda-self-test` 在不连接矿池的情况下验证 GPU kernel，或用
 `btc_stratum --autotune` 在更换驱动/硬件后重新测试。
+runtime 路径不标准时可以设置 `BTCRIG_OPENCL_LIBRARY=/path/to/libOpenCL.so`。
+Termux 下用 `BTCRIG_OPENCL=ON ./termux.sh` 会安装 headers 和 OpenCL ICD/vendor bridge 包。
 ```

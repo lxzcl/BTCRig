@@ -31,7 +31,8 @@ BTCRig 是一个跨平台 C 项目，提供 SHA256d 基准、Stratum V1 挖矿�
 | NVIDIA GeForce RTX 2050 Laptop GPU | Windows 11 / MSYS2 UCRT64 | CUDA Driver API | 1 GPU | 约 589 MH/s |
 | NVIDIA GeForce RTX 2050 Laptop GPU | Windows 11 / MSYS2 UCRT64 | OpenCL modern-unrolled | 1 GPU | 约 536 MH/s |
 | AMD 7945HX | Windows 11 | x86-SHA-NI | 32 | 约 600 MH/s |
-| 骁龙 8 Elite | Termux | ARMv8 SHA2 | 8 | 约 150 MH/s |
+| Odin3 / Adreno 830 | Termux / Android 15 | OpenCL modern-fixed-npi4 | 1 GPU | 约 272 MH/s |
+| Odin3 / 骁龙 8 Elite | Termux / Android 15 | ARMv8 SHA2 | 8 | 约 160 MH/s |
 | NanoPi Fire3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.4 MH/s |
 | NanoPi M3 | Linux ARM64 | ARMv8 SHA2 | 8 | 约46.3 MH/s |
 | RockPi-S | Linux ARM64 | ARMv8 SHA2 | 4 | 约8 MH/s |
@@ -141,7 +142,7 @@ cmake --build build -j"$(nproc)"
 ./build/btc_stratum --cuda
 ```
 
-随包 `config.json` 默认开启 OpenCL。`-DBTCRIG_OPENCL=ON` 只表示把 GPU worker 编译进程序；OpenCL runtime 会动态加载，所以缺少 `OpenCL.dll` 或 `libOpenCL.so.1` 时仍可正常 CPU-only 启动。
+随包 `config.json` 默认开启 OpenCL。`-DBTCRIG_OPENCL=ON` 只表示把 GPU worker 编译进程序；OpenCL runtime 会动态加载，所以缺少 `OpenCL.dll` 或 `libOpenCL.so.1` 时仍可正常 CPU-only 启动。可以用 `BTCRIG_OPENCL_LIBRARY=/path/to/libOpenCL.so` 指定非标准 runtime；Android 构建也会尝试新系统常见的 OpenCL shim。
 
 `config.json` 默认也关闭 CUDA。`-DBTCRIG_CUDA=ON` 会编译 CUDA worker 和 `btc_bench --cuda`；运行时只需要 NVIDIA 驱动提供 Windows 上的 `nvcuda.dll` 或 Linux 上的 `libcuda.so.1`。只有需要用 `tools/generate_cuda_ptx.sh` 重新生成 `src/cuda_sha256d_ptx.h` 时，才需要 CUDA Toolkit 或能编译 CUDA device code 的 clang。可以用 `tools/analyze_cuda_ptx.sh sm_86` 查看内嵌 CUDA kernel 的 PTX 级寄存器和指令计数。
 
@@ -220,6 +221,8 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 -p, --pass PASS            指定密码
 -d, --suggest-diff N       建议初始难度
 -t, --threads N            CPU 线程数，0 表示自动
+--cpu-affinity             按检测到的 CPU 顺序绑定 CPU worker
+--no-cpu-affinity          关闭 CPU worker 绑核
 --stats N                  每 N 秒输出统计
 --runtime N                运行 N 秒，0 表示不限时
 --retries N                重连次数，-1 表示无限重连，0 表示不重连
@@ -276,7 +279,8 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
   },
   "cpu": {
     "enabled": true,
-    "threads": 0
+    "threads": 0,
+    "affinity": false
   },
   "opencl": {
     "enabled": true,
@@ -321,9 +325,9 @@ ldd build/btc_stratum.exe build/btc_proxy.exe build/btc_bench.exe \
 
 随包配置默认开启 OpenCL，CUDA 仍是运行时可选模块。构建机器如果有 OpenCL 头文件，`btc_stratum` 默认会包含 OpenCL worker；如果没有，则跳过这条路径。OpenCL 和 CUDA 都通过运行时驱动加载，开启任意 GPU 后端但找不到可用 runtime 或设备时，程序会输出警告，并继续保留 CPU 路径。启用 OpenCL 且没有配置具体设备列表时，会默认使用全部 OpenCL GPU 设备；CUDA 当前使用一张指定的 NVIDIA 设备。
 
-CPU、OpenCL 和 CUDA worker 共用一个 nonce 分配器，因此不会扫描重叠 nonce。纯 CPU 模式下 CPU worker 使用较大的 nonce 块；只要存在 GPU worker，CPU worker 会自动切换为较小块，而 GPU worker 继续使用配置中的 `batch-size`。新 job、暂停/恢复和停止会直接唤醒等待中的 worker，不再只依赖周期性轮询。
+CPU、OpenCL 和 CUDA worker 共用一个 nonce 分配器，因此不会扫描重叠 nonce。纯 CPU 模式下 CPU worker 使用较大的 nonce 块；只要存在 GPU worker，CPU worker 会自动切换为较小块，而 GPU worker 继续使用配置中的 `batch-size`。当 `cpu.affinity=true` 时，CPU worker 会按检测到的 CPU 顺序绑核；在大小核系统上会优先使用高 capacity 核心。新 job、暂停/恢复和停止会直接唤醒等待中的 worker，不再只依赖周期性轮询。
 
-默认配置中 `autotune.enabled=true`、`autotune.cpu-self-test=false` 且 `autotune.gpu-self-test=false`。第一次正常挖矿启动时，程序会先离线运行 self-test 和基准测试，再连接矿池。CPU 和 GPU 的完成标记会分开记录：只运行 CPU 时只会把 `cpu-self-test` 改成 `true`，之后再启用 OpenCL 或 CUDA 仍会触发 GPU 调优，并保留已有 CPU 结果。当 `config.json` 中 `opencl.enabled=true`、`cuda.enabled=true`，或者命令行传入对应 GPU 参数时，自动调优会测试 GPU 模式；随包配置默认开启 OpenCL。如果两个 GPU 后端都关闭，自动调优会保持 CPU-only。如果 OpenCL 已启用，它会先对每张 OpenCL GPU 分阶段测试 `backend`、`kernel`、`local-work-size`、`nonces-per-work-item` 和 `batch-size`，然后测试 CPU-only、全部 GPU、CPU+全部 GPU、半数 CPU+全部 GPU、每张单独 GPU、CPU+每张单独 GPU；如果机器有超过两张 GPU，还会测试“全部 GPU 去掉其中一张”的组合。如果 CUDA 已启用，会先预热选中的 NVIDIA 设备，调优 `kernel`、`threads-per-block`、`nonces-per-thread` 和 `batch-size`，再测试 CUDA-only、CPU+CUDA 和半数 CPU+CUDA。测试结束后会把最快模式和每种模式的算力写回 `config.json`。旧版 `autotune.self-test`、`self_test`、`done` 和 `completed` 字段仍会作为 CPU 完成标记兼容读取。
+默认配置中 `autotune.enabled=true`、`autotune.cpu-self-test=false` 且 `autotune.gpu-self-test=false`。第一次正常挖矿启动时，程序会先离线运行 self-test 和基准测试，再连接矿池。CPU 和 GPU 的完成标记会分开记录：只运行 CPU 时只会把 `cpu-self-test` 改成 `true`，之后再启用 OpenCL 或 CUDA 仍会触发 GPU 调优，并保留已有 CPU 结果。当 `config.json` 中 `opencl.enabled=true`、`cuda.enabled=true`，或者命令行传入对应 GPU 参数时，自动调优会测试 GPU 模式；随包配置默认开启 OpenCL。如果两个 GPU 后端都关闭，自动调优会保持 CPU-only。CPU 模式会在配置上限内测试一组小候选：满线程、满线程减 1、3/4、2/3、半数和 1 线程，并在支持的平台上同时测试绑核开关。如果 OpenCL 已启用，它会先对每张 OpenCL GPU 分阶段测试 `backend`、`kernel`、`local-work-size`、`nonces-per-work-item` 和 `batch-size`，然后测试 CPU-only 候选、全部 GPU、CPU+全部 GPU 候选、每张单独 GPU、CPU+每张单独 GPU；如果机器有超过两张 GPU，还会测试“全部 GPU 去掉其中一张”的组合。如果 CUDA 已启用，会先预热选中的 NVIDIA 设备，调优 `kernel`、`threads-per-block`、`nonces-per-thread` 和 `batch-size`，再测试 CUDA-only 和 CPU+CUDA 候选。测试结束后会把最快模式和每种模式的算力写回 `config.json`。旧版 `autotune.self-test`、`self_test`、`done` 和 `completed` 字段仍会作为 CPU 完成标记兼容读取。
 
 这里故意不穷举所有 CPU/GPU 子集。高价值组合已经能覆盖常见情况：独显加核显、CPU 线程和 GPU 驱动抢资源、某张慢卡或不稳定卡拖累整体。换驱动、改频率、换硬件，或调整 OpenCL batch/local/npi、CUDA kernel/batch/block/npt 后，可以用 `--autotune` 重新测试。
 
@@ -342,6 +346,12 @@ CPU、OpenCL 和 CUDA worker 共用一个 nonce 分配器，因此不会扫描�
 
 ```bash
 BTC_MINER_SHA_BACKEND=openssl ./build/btc_bench -t "$(nproc)" -s 10
+```
+
+可以用 CPU sweep 对比线程数，并观察每个 worker 的算力差异：
+
+```bash
+./build/btc_bench --cpu-sweep --repeat 3 --per-thread --affinity -t "$(nproc)" -s 2
 ```
 
 OpenCL 可以通过 `config.json` 或命令行启用：

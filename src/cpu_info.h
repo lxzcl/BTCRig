@@ -28,5 +28,7 @@ void cpu_info_detect(cpu_info_t *info);
 void cpu_info_print(const cpu_info_t *info);
 int cpu_info_recommended_threads(void);
 int cpu_info_affinity_plan(const cpu_info_t *info, int *out, int max_count);
+int cpu_info_affinity_supported(void);
+int cpu_info_bind_current_thread(int cpu_id);
 
 #endif
