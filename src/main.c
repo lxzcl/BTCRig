@@ -24,6 +24,7 @@
 typedef struct {
     int id;
     int thread_count;
+    int target_cpu;
     int seconds;
     sha256d_backend_t backend;
     uint64_t hashes;
@@ -192,6 +193,10 @@ static void *worker_main(void *opaque) {
     uint32_t nonce = (uint32_t)arg->id * 4096U;
     uint64_t hashes = 0;
     uint8_t sink = 0;
+
+    if (arg->target_cpu >= 0 && cpu_info_bind_current_thread(arg->target_cpu) != 0) {
+        fprintf(stderr, "worker %d failed to bind cpu%d\n", arg->id, arg->target_cpu);
+    }
     const double deadline = monotonic_seconds() + (double)arg->seconds;
     sha256d_nonce_range_func_t scan_nonce_range = NULL;
 
@@ -366,7 +371,7 @@ static int configure_backend_from_env(sha256d_backend_t *backend) {
 
 static void usage(const char *argv0) {
     fprintf(stderr,
-            "Usage: %s [-t threads] [-s seconds] [--repeat N] [--per-thread] [--cpu-sweep]\n"
+            "Usage: %s [-t threads] [-s seconds] [--repeat N] [--per-thread] [--cpu-sweep] [--affinity]\n"
             "       [--backend openssl|fast-c|arm-sha2|x86-sha-ni]\n"
             "       [--opencl] [--opencl-self-test] [--opencl-platform N] [--opencl-device N]\n"
             "       [--opencl-batch N] [--opencl-local N] [--opencl-npi N]\n"
@@ -378,7 +383,12 @@ static void usage(const char *argv0) {
             argv0);
 }
 
-static int run_bench_once(int threads, int seconds, sha256d_backend_t backend, int per_thread, bench_result_t *result) {
+static int run_bench_once(int threads,
+                          int seconds,
+                          sha256d_backend_t backend,
+                          int per_thread,
+                          int affinity,
+                          bench_result_t *result) {
     pthread_t *workers = calloc((size_t)threads, sizeof(*workers));
     worker_arg_t *args = calloc((size_t)threads, sizeof(*args));
     if (workers == NULL || args == NULL) {
@@ -388,10 +398,24 @@ static int run_bench_once(int threads, int seconds, sha256d_backend_t backend, i
         return 1;
     }
 
+    int cpu_order[CPU_INFO_MAX_CPUS];
+    int cpu_order_count = 0;
+    if (affinity && cpu_info_affinity_supported()) {
+        cpu_info_t info;
+        cpu_info_detect(&info);
+        cpu_order_count = cpu_info_affinity_plan(&info, cpu_order, CPU_INFO_MAX_CPUS);
+    } else {
+        affinity = 0;
+    }
+    if (cpu_order_count <= 0) {
+        affinity = 0;
+    }
+
     const double start = monotonic_seconds();
     for (int i = 0; i < threads; ++i) {
         args[i].id = i;
         args[i].thread_count = threads;
+        args[i].target_cpu = affinity ? cpu_order[i % cpu_order_count] : -1;
         args[i].seconds = seconds;
         args[i].backend = backend;
         if (pthread_create(&workers[i], NULL, worker_main, &args[i]) != 0) {
@@ -413,15 +437,19 @@ static int run_bench_once(int threads, int seconds, sha256d_backend_t backend, i
 
     printf("%s[BENCH]%s threads=%d seconds=%d elapsed=%.3f\n",
            C_BRIGHT_CYAN, C_RESET, threads, seconds, elapsed);
-    printf("%s[BENCH]%s backend=%s affinity=off\n",
-           C_BRIGHT_CYAN, C_RESET, sha256d_backend_name(backend));
+    printf("%s[BENCH]%s backend=%s affinity=%s\n",
+           C_BRIGHT_CYAN, C_RESET, sha256d_backend_name(backend), affinity ? "on" : "off");
     printf("%s[BENCH]%s sha256d_midstate_hashes=%" PRIu64 " rate=%s%.3f MH/s%s sink=%02x\n",
            C_BRIGHT_CYAN, C_RESET, total, C_BRIGHT_GREEN, rate / 1000000.0, C_RESET, sink);
     if (per_thread) {
         printf("%s[BENCH]%s per-thread=", C_BRIGHT_CYAN, C_RESET);
         for (int i = 0; i < threads; ++i) {
             double thread_rate = elapsed > 0.0 ? (double)args[i].hashes / elapsed : 0.0;
-            printf("%s%d:%.3f", i == 0 ? "" : ",", i, thread_rate / 1000000.0);
+            if (args[i].target_cpu >= 0) {
+                printf("%s%d@cpu%d:%.3f", i == 0 ? "" : ",", i, args[i].target_cpu, thread_rate / 1000000.0);
+            } else {
+                printf("%s%d:%.3f", i == 0 ? "" : ",", i, thread_rate / 1000000.0);
+            }
         }
         printf(" MH/s\n");
     }
@@ -442,7 +470,13 @@ static int run_bench_once(int threads, int seconds, sha256d_backend_t backend, i
     return 0;
 }
 
-static int run_bench(int threads, int seconds, sha256d_backend_t backend, int repeat, int per_thread, bench_result_t *result) {
+static int run_bench(int threads,
+                     int seconds,
+                     sha256d_backend_t backend,
+                     int repeat,
+                     int per_thread,
+                     int affinity,
+                     bench_result_t *result) {
     if (repeat <= 0) {
         repeat = 1;
     }
@@ -469,7 +503,7 @@ static int run_bench(int threads, int seconds, sha256d_backend_t backend, int re
         if (repeat > 1) {
             printf("%s[BENCH]%s repeat=%d/%d\n", C_BRIGHT_CYAN, C_RESET, i + 1, repeat);
         }
-        rc = run_bench_once(threads, seconds, backend, per_thread, &last);
+        rc = run_bench_once(threads, seconds, backend, per_thread, affinity, &last);
         if (rc != 0) {
             break;
         }
@@ -503,7 +537,7 @@ static int run_bench(int threads, int seconds, sha256d_backend_t backend, int re
     return rc;
 }
 
-static int run_cpu_sweep(int max_threads, int seconds, sha256d_backend_t backend, int repeat, int per_thread) {
+static int run_cpu_sweep(int max_threads, int seconds, sha256d_backend_t backend, int repeat, int per_thread, int affinity) {
     if (max_threads <= 0) {
         max_threads = 1;
     }
@@ -511,7 +545,7 @@ static int run_cpu_sweep(int max_threads, int seconds, sha256d_backend_t backend
            C_BRIGHT_CYAN, C_RESET, sha256d_backend_name(backend), max_threads, seconds, repeat);
     for (int threads = 1; threads <= max_threads; ++threads) {
         bench_result_t result;
-        int rc = run_bench(threads, seconds, backend, repeat, per_thread, &result);
+        int rc = run_bench(threads, seconds, backend, repeat, per_thread, affinity, &result);
         if (rc != 0) {
             return rc;
         }
@@ -1095,6 +1129,7 @@ int main(int argc, char **argv) {
     int run_all = 0;
     int run_cpu_sweep_flag = 0;
     int per_thread = 0;
+    int affinity = 0;
 #if defined(BTC_MINER_OPENCL)
     int run_opencl = 0;
     int run_opencl_self_test = 0;
@@ -1140,6 +1175,8 @@ int main(int argc, char **argv) {
             per_thread = 1;
         } else if (strcmp(argv[i], "--cpu-sweep") == 0) {
             run_cpu_sweep_flag = 1;
+        } else if (strcmp(argv[i], "--affinity") == 0) {
+            affinity = 1;
         } else if (strcmp(argv[i], "--backend") == 0 && i + 1 < argc) {
             if (sha256d_parse_backend(argv[++i], &backend) != 0) {
                 fprintf(stderr, "unknown backend: %s\n", argv[i]);
@@ -1278,29 +1315,29 @@ int main(int argc, char **argv) {
 
     if (run_all) {
         int rc = run_cpu_sweep_flag ?
-            run_cpu_sweep(threads, seconds, SHA256D_BACKEND_OPENSSL, repeat, per_thread) :
-            run_bench(threads, seconds, SHA256D_BACKEND_OPENSSL, repeat, per_thread, NULL);
+            run_cpu_sweep(threads, seconds, SHA256D_BACKEND_OPENSSL, repeat, per_thread, affinity) :
+            run_bench(threads, seconds, SHA256D_BACKEND_OPENSSL, repeat, per_thread, affinity, NULL);
         if (rc != 0) {
             return rc;
         }
         rc = run_cpu_sweep_flag ?
-            run_cpu_sweep(threads, seconds, SHA256D_BACKEND_FAST_C, repeat, per_thread) :
-            run_bench(threads, seconds, SHA256D_BACKEND_FAST_C, repeat, per_thread, NULL);
+            run_cpu_sweep(threads, seconds, SHA256D_BACKEND_FAST_C, repeat, per_thread, affinity) :
+            run_bench(threads, seconds, SHA256D_BACKEND_FAST_C, repeat, per_thread, affinity, NULL);
         if (rc != 0) {
             return rc;
         }
         if (sha256d_backend_available(SHA256D_BACKEND_ARM_SHA2)) {
             rc = run_cpu_sweep_flag ?
-                run_cpu_sweep(threads, seconds, SHA256D_BACKEND_ARM_SHA2, repeat, per_thread) :
-                run_bench(threads, seconds, SHA256D_BACKEND_ARM_SHA2, repeat, per_thread, NULL);
+                run_cpu_sweep(threads, seconds, SHA256D_BACKEND_ARM_SHA2, repeat, per_thread, affinity) :
+                run_bench(threads, seconds, SHA256D_BACKEND_ARM_SHA2, repeat, per_thread, affinity, NULL);
             if (rc != 0) {
                 return rc;
             }
         }
         if (sha256d_backend_available(SHA256D_BACKEND_X86_SHA_NI)) {
             rc = run_cpu_sweep_flag ?
-                run_cpu_sweep(threads, seconds, SHA256D_BACKEND_X86_SHA_NI, repeat, per_thread) :
-                run_bench(threads, seconds, SHA256D_BACKEND_X86_SHA_NI, repeat, per_thread, NULL);
+                run_cpu_sweep(threads, seconds, SHA256D_BACKEND_X86_SHA_NI, repeat, per_thread, affinity) :
+                run_bench(threads, seconds, SHA256D_BACKEND_X86_SHA_NI, repeat, per_thread, affinity, NULL);
             if (rc != 0) {
                 return rc;
             }
@@ -1320,7 +1357,7 @@ int main(int argc, char **argv) {
     }
 
     if (run_cpu_sweep_flag) {
-        return run_cpu_sweep(threads, seconds, backend, repeat, per_thread);
+        return run_cpu_sweep(threads, seconds, backend, repeat, per_thread, affinity);
     }
-    return run_bench(threads, seconds, backend, repeat, per_thread, NULL);
+    return run_bench(threads, seconds, backend, repeat, per_thread, affinity, NULL);
 }

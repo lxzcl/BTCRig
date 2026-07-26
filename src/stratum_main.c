@@ -45,7 +45,7 @@
 #define MAX_RECONNECT_DELAY 60
 #define DEFAULT_STATS_INTERVAL 5.0
 #define DEFAULT_AUTOTUNE_SECONDS 1.5
-#define AUTOTUNE_MAX_RESULTS 64
+#define AUTOTUNE_MAX_RESULTS 96
 #define AUTOTUNE_MAX_CPU_THREAD_CANDIDATES 8
 
 static char stdout_buffer[1024 * 1024];
@@ -64,6 +64,7 @@ typedef struct {
     int retries;
     int reconnect_delay;
     int thread_count;
+    int cpu_affinity;
     int cpu_enabled;
     int enable_mining;
     int autosave;
@@ -81,6 +82,7 @@ typedef struct {
 typedef struct {
     char name[96];
     int cpu_threads;
+    int cpu_affinity;
     miner_opencl_config_t opencl;
     miner_cuda_config_t cuda;
     double hashrate;
@@ -600,6 +602,7 @@ static void app_config_set_defaults(app_config_t *config) {
     config->retries = DEFAULT_RETRIES;
     config->reconnect_delay = DEFAULT_RECONNECT_DELAY;
     config->thread_count = 0;
+    config->cpu_affinity = 0;
     config->cpu_enabled = 1;
     config->enable_mining = 1;
     config->autosave = 1;
@@ -791,6 +794,7 @@ static int load_config_file(app_config_t *config, const char *path, int required
     if (json_is_object(cpu)) {
         config->cpu_enabled = json_bool_value(json_object_get(cpu, "enabled"), config->cpu_enabled);
         config->thread_count = json_int_value(json_object_get(cpu, "threads"), config->thread_count);
+        config->cpu_affinity = json_bool_value(json_object_get(cpu, "affinity"), config->cpu_affinity);
     }
 
     json_t *opencl = json_object_get(root, "opencl");
@@ -1007,6 +1011,7 @@ static void autotune_device_list_config(const miner_opencl_config_t *base,
 #endif
 
 static double autotune_run_mode(int cpu_threads,
+                                int cpu_affinity,
                                 const miner_opencl_config_t *opencl,
                                 const miner_cuda_config_t *cuda,
                                 double seconds,
@@ -1022,6 +1027,7 @@ static double autotune_run_mode(int cpu_threads,
     if (miner == NULL) {
         return 0.0;
     }
+    miner_set_cpu_affinity(miner, cpu_affinity);
     if (miner_start(miner) != 0) {
         miner_destroy(miner);
         return 0.0;
@@ -1221,7 +1227,7 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
                    candidate.batch_size,
                    candidate.local_work_size,
                    candidate.nonces_per_work_item);
-            double hashrate = autotune_run_mode(0, &opencl, NULL, seconds, &ok);
+            double hashrate = autotune_run_mode(0, 0, &opencl, NULL, seconds, &ok);
             if (ok) {
                 printf("%s[AUTOTUNE]%s gpu%d backend=%s kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
                        C_CYAN,
@@ -1294,7 +1300,7 @@ static void autotune_opencl_device_params(const miner_opencl_config_t *base,
                candidate.batch_size,
                candidate.local_work_size,
                candidate.nonces_per_work_item);
-        double hashrate = autotune_run_mode(0, &opencl, NULL, seconds, &ok);
+        double hashrate = autotune_run_mode(0, 0, &opencl, NULL, seconds, &ok);
         if (ok) {
             printf("%s[AUTOTUNE]%s gpu%d backend=%s kernel=%s batch=%u local=%u npi=%u hashrate=%.3f MH/s\n",
                    C_CYAN,
@@ -1488,7 +1494,7 @@ static void autotune_cuda_params(miner_cuda_config_t *config, double seconds) {
            best_config.batch_size,
            best_config.threads_per_block,
            best_config.nonces_per_thread);
-    (void)autotune_run_mode(0, NULL, &best_config, seconds, NULL);
+    (void)autotune_run_mode(0, 0, NULL, &best_config, seconds, NULL);
 
     printf("%s[AUTOTUNE]%s tuning CUDA kernel/block/npt\n", C_CYAN, C_RESET);
     for (int ki = 0; ki < kernel_count; ++ki) {
@@ -1513,7 +1519,7 @@ static void autotune_cuda_params(miner_cuda_config_t *config, double seconds) {
                        candidate.batch_size,
                        candidate.threads_per_block,
                        candidate.nonces_per_thread);
-                double hashrate = autotune_run_mode(0, NULL, &candidate, seconds, &ok);
+                double hashrate = autotune_run_mode(0, 0, NULL, &candidate, seconds, &ok);
                 if (ok) {
                     printf("%s[AUTOTUNE]%s cuda device=%d kernel=%s batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
                            C_CYAN,
@@ -1561,7 +1567,7 @@ static void autotune_cuda_params(miner_cuda_config_t *config, double seconds) {
                candidate.batch_size,
                candidate.threads_per_block,
                candidate.nonces_per_thread);
-        double hashrate = autotune_run_mode(0, NULL, &candidate, seconds, &ok);
+        double hashrate = autotune_run_mode(0, 0, NULL, &candidate, seconds, &ok);
         if (ok) {
             printf("%s[AUTOTUNE]%s cuda device=%d kernel=%s batch=%u block=%u npt=%u hashrate=%.3f MH/s\n",
                    C_CYAN,
@@ -1619,6 +1625,7 @@ static int autotune_append_result(autotune_result_t *results,
                                   int *count,
                                   const char *name,
                                   int cpu_threads,
+                                  int cpu_affinity,
                                   const miner_opencl_config_t *opencl,
                                   const miner_cuda_config_t *cuda,
                                   double seconds) {
@@ -1630,6 +1637,7 @@ static int autotune_append_result(autotune_result_t *results,
     memset(result, 0, sizeof(*result));
     copy_string(result->name, sizeof(result->name), name);
     result->cpu_threads = cpu_threads;
+    result->cpu_affinity = cpu_affinity && cpu_threads > 0 ? 1 : 0;
     if (opencl != NULL) {
         result->opencl = *opencl;
     } else {
@@ -1641,16 +1649,22 @@ static int autotune_append_result(autotune_result_t *results,
         autotune_disable_cuda(&result->cuda);
     }
 
-    printf("%s[AUTOTUNE]%s testing mode=%s%s%s cpu-threads=%d opencl=%s cuda=%s\n",
+    printf("%s[AUTOTUNE]%s testing mode=%s%s%s cpu-threads=%d affinity=%s opencl=%s cuda=%s\n",
            C_CYAN,
            C_RESET,
            C_BRIGHT_YELLOW,
            result->name,
            C_RESET,
            cpu_threads,
+           result->cpu_affinity ? "on" : "off",
            autotune_opencl_mode_name(&result->opencl),
            autotune_cuda_mode_name(&result->cuda));
-    result->hashrate = autotune_run_mode(cpu_threads, &result->opencl, &result->cuda, seconds, &result->ok);
+    result->hashrate = autotune_run_mode(cpu_threads,
+                                         result->cpu_affinity,
+                                         &result->opencl,
+                                         &result->cuda,
+                                         seconds,
+                                         &result->ok);
     if (result->ok) {
         printf("%s[AUTOTUNE]%s mode=%s%s%s hashrate=%.3f MH/s\n",
                C_CYAN,
@@ -1687,8 +1701,18 @@ static void autotune_append_cpu_thread_results(autotune_result_t *results,
         } else {
             snprintf(name, sizeof(name), "%s-%d", base_name, candidates[i]);
         }
-        if (autotune_append_result(results, result_count, name, candidates[i], opencl, cuda, seconds) != 0) {
+        if (autotune_append_result(results, result_count, name, candidates[i], 0, opencl, cuda, seconds) != 0) {
             return;
+        }
+        if (cpu_info_affinity_supported()) {
+            if (candidates[i] == full_threads) {
+                snprintf(name, sizeof(name), "%s-affinity", base_name);
+            } else {
+                snprintf(name, sizeof(name), "%s-affinity-%d", base_name, candidates[i]);
+            }
+            if (autotune_append_result(results, result_count, name, candidates[i], 1, opencl, cuda, seconds) != 0) {
+                return;
+            }
         }
     }
 }
@@ -1746,6 +1770,7 @@ static int save_autotune_config(const char *path,
 
     json_object_set_new(cpu, "enabled", config->cpu_enabled ? json_true() : json_false());
     json_object_set_new(cpu, "threads", json_integer(config->thread_count));
+    json_object_set_new(cpu, "affinity", config->cpu_affinity ? json_true() : json_false());
 
     json_object_set_new(opencl, "enabled", config->opencl.enabled ? json_true() : json_false());
     json_object_set_new(opencl, "all-devices", config->opencl.all_devices ? json_true() : json_false());
@@ -1824,6 +1849,7 @@ static int save_autotune_config(const char *path,
         json_object_set_new(item, "ok", result->ok ? json_true() : json_false());
         json_object_set_new(item, "hashrate", json_real(result->hashrate));
         json_object_set_new(item, "cpu-threads", json_integer(result->cpu_threads));
+        json_object_set_new(item, "cpu-affinity", result->cpu_affinity ? json_true() : json_false());
         json_object_set_new(item, "opencl", json_string(autotune_opencl_mode_name(&result->opencl)));
         json_object_set_new(item, "cuda", json_string(autotune_cuda_mode_name(&result->cuda)));
         if (result->cuda.enabled) {
@@ -1942,7 +1968,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
 
             autotune_device_list_config(&config->opencl, resolved, resolved_count, &all_gpu_opencl);
 
-            autotune_append_result(results, &result_count, "all-gpu", 0, &all_gpu_opencl, &cpu_only_cuda, seconds);
+            autotune_append_result(results, &result_count, "all-gpu", 0, 0, &all_gpu_opencl, &cpu_only_cuda, seconds);
             if (full_threads > 0) {
                 autotune_append_cpu_thread_results(results,
                                                    &result_count,
@@ -1958,13 +1984,14 @@ static int run_autotune(app_config_t *config, const char *config_path) {
                 char name[96];
                 autotune_device_list_config(&config->opencl, &resolved[i], 1, &device_opencl);
                 snprintf(name, sizeof(name), "gpu%d", i);
-                autotune_append_result(results, &result_count, name, 0, &device_opencl, &cpu_only_cuda, seconds);
+                autotune_append_result(results, &result_count, name, 0, 0, &device_opencl, &cpu_only_cuda, seconds);
                 if (full_threads > 0) {
                     snprintf(name, sizeof(name), "cpu+gpu%d", i);
                     autotune_append_result(results,
                                            &result_count,
                                            name,
                                            full_threads,
+                                           config->cpu_affinity,
                                            &device_opencl,
                                            &cpu_only_cuda,
                                            seconds);
@@ -1984,13 +2011,14 @@ static int run_autotune(app_config_t *config, const char *config_path) {
                     miner_opencl_config_t subset_opencl;
                     autotune_device_list_config(&config->opencl, subset, subset_count, &subset_opencl);
                     snprintf(name, sizeof(name), "all-gpu-minus-gpu%d", skip);
-                    autotune_append_result(results, &result_count, name, 0, &subset_opencl, &cpu_only_cuda, seconds);
+                    autotune_append_result(results, &result_count, name, 0, 0, &subset_opencl, &cpu_only_cuda, seconds);
                     if (full_threads > 0) {
                         snprintf(name, sizeof(name), "cpu+all-gpu-minus-gpu%d", skip);
                         autotune_append_result(results,
                                                &result_count,
                                                name,
                                                full_threads,
+                                               config->cpu_affinity,
                                                &subset_opencl,
                                                &cpu_only_cuda,
                                                seconds);
@@ -2013,7 +2041,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
         cuda_config.enabled = 1;
         autotune_cuda_params(&cuda_config, seconds);
 
-        autotune_append_result(results, &result_count, "cuda", 0, &cpu_only_opencl, &cuda_config, seconds);
+        autotune_append_result(results, &result_count, "cuda", 0, 0, &cpu_only_opencl, &cuda_config, seconds);
         if (full_threads > 0) {
             autotune_append_cpu_thread_results(results,
                                                &result_count,
@@ -2054,6 +2082,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
 
     config->cpu_enabled = best->cpu_threads > 0 ? 1 : 0;
     config->thread_count = best->cpu_threads;
+    config->cpu_affinity = best->cpu_affinity;
     config->opencl = best->opencl;
     config->cuda = best->cuda;
     if (cpu_autotune_ok) {
@@ -2063,7 +2092,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
         config->gpu_autotune_done = 1;
     }
 
-    printf("%s[AUTOTUNE]%s selected mode=%s%s%s hashrate=%.3f MH/s cpu-threads=%d opencl=%s cuda=%s\n",
+    printf("%s[AUTOTUNE]%s selected mode=%s%s%s hashrate=%.3f MH/s cpu-threads=%d affinity=%s opencl=%s cuda=%s\n",
            C_BRIGHT_GREEN,
            C_RESET,
            C_BRIGHT_GREEN,
@@ -2071,6 +2100,7 @@ static int run_autotune(app_config_t *config, const char *config_path) {
            C_RESET,
            best->hashrate / 1000000.0,
            config->thread_count,
+           config->cpu_affinity ? "on" : "off",
            autotune_opencl_mode_name(&config->opencl),
            autotune_cuda_mode_name(&config->cuda));
 
@@ -2120,6 +2150,7 @@ static void usage(const char *argv0) {
     printf("  %s [-c config.json] [-o stratum+tls://host:port] [-u wallet.worker] [-p password] [-d difficulty]\n", argv0);
     printf("     [-t threads] [-r retries] [--runtime seconds] [--stats seconds]\n");
     printf("     [--reconnect-delay seconds] [--donate-level N] [--no-mine]\n");
+    printf("     [--cpu-affinity] [--no-cpu-affinity]\n");
     printf("     [--no-cpu] [--opencl] [--opencl-all] [--opencl-platform N] [--opencl-device N]\n");
     printf("     [--opencl-batch N] [--opencl-local N] [--opencl-npi N]\n");
     printf("     [--opencl-backend auto|compat10|modern] [--opencl-kernel auto|compact|unrolled|fixed-npi1|fixed-npi2|fixed-npi4|register-heavy]\n");
@@ -2137,6 +2168,7 @@ static void usage(const char *argv0) {
     printf("  reconnect-delay: %d..%d seconds\n", DEFAULT_RECONNECT_DELAY, MAX_RECONNECT_DELAY);
     printf("  stats: %.1f seconds\n", DEFAULT_STATS_INTERVAL);
     printf("  threads: auto (%d recommended)\n", default_thread_count());
+    printf("  cpu-affinity: off by default; autotune tests it on supported platforms\n");
     printf("  opencl: packaged config enables all OpenCL GPU devices unless a device is selected\n");
     printf("  opencl compat10: OpenCL 1.0/1.1 compatible, requires global int32 atomics on 1.0 devices\n");
     printf("  opencl backend auto: benchmarks compat10 and modern when supported\n");
@@ -2302,6 +2334,12 @@ int main(int argc, char **argv) {
             app_config.enable_mining = 0;
         } else if (strcmp(argv[i], "--no-cpu") == 0) {
             app_config.cpu_enabled = 0;
+            worker_override = 1;
+        } else if (strcmp(argv[i], "--cpu-affinity") == 0) {
+            app_config.cpu_affinity = 1;
+            worker_override = 1;
+        } else if (strcmp(argv[i], "--no-cpu-affinity") == 0) {
+            app_config.cpu_affinity = 0;
             worker_override = 1;
         } else if (strcmp(argv[i], "--opencl") == 0) {
             app_config.opencl.enabled = 1;
@@ -2490,7 +2528,7 @@ int main(int argc, char **argv) {
         snprintf(retries_text, sizeof(retries_text), "%d", app_config.retries);
     }
 
-    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s opencl=%s mode=%s backend=%s kernel=%s cuda=%s mode=%s kernel=%s batch=%u block=%u npt=%u mine=%s retries=%s retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
+    printf("%s[CONFIG]%s pools=%d cpu=%s threads=%s%d%s affinity=%s opencl=%s mode=%s backend=%s kernel=%s cuda=%s mode=%s kernel=%s batch=%u block=%u npt=%u mine=%s retries=%s retry-pause=%d..%d stats=%.1f runtime=%.1f donate=%d%%\n",
            C_CYAN,
            C_RESET,
            app_config.pool_count,
@@ -2498,6 +2536,7 @@ int main(int argc, char **argv) {
            C_BRIGHT_GREEN,
            app_config.thread_count,
            C_RESET,
+           app_config.cpu_affinity ? "on" : "off",
            app_config.opencl.enabled ? "on" : "off",
            opencl_mode,
            opencl_backend_variant_name(app_config.opencl.backend_variant),
@@ -2563,6 +2602,7 @@ int main(int argc, char **argv) {
 
         stratum_client_config_t config = {
             .thread_count = app_config.thread_count,
+            .cpu_affinity = app_config.cpu_affinity,
             .enable_mining = mining_enabled,
             .opencl = app_config.opencl,
             .cuda = app_config.cuda,

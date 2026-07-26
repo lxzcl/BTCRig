@@ -1,17 +1,22 @@
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
 
 #include "cpu_info.h"
 
 #include "console.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32)
 #include <windows.h>
-#else
+#elif defined(__linux__)
+#include <sched.h>
+#endif
+
+#if !defined(_WIN32)
 #include <unistd.h>
 #endif
 
@@ -175,13 +180,11 @@ static int sibling_list_implies_smt(const char *text) {
 }
 
 static int same_affinity_group(const cpu_info_entry_t *a, const cpu_info_entry_t *b) {
-    if (same_physical_core(a, b)) {
-        return 1;
+    if (a->thread_siblings[0] != '\0' && b->thread_siblings[0] != '\0') {
+        return strcmp(a->thread_siblings, b->thread_siblings) == 0;
     }
 
-    return a->thread_siblings[0] != '\0' &&
-           b->thread_siblings[0] != '\0' &&
-           strcmp(a->thread_siblings, b->thread_siblings) == 0;
+    return same_physical_core(a, b);
 }
 
 static int compare_cpu_entries(const void *left, const void *right) {
@@ -307,6 +310,28 @@ static int append_entry_order(const cpu_info_t *info, int *out, int max_count) {
     return count;
 }
 
+static long cpu_entry_rank(const cpu_info_entry_t *entry) {
+    if (entry->capacity > 0) {
+        return entry->capacity;
+    }
+    if (entry->max_freq_khz > 0) {
+        return entry->max_freq_khz;
+    }
+    return 0;
+}
+
+static int compare_cpu_entries_by_speed(const void *left, const void *right) {
+    const cpu_info_entry_t *a = (const cpu_info_entry_t *)left;
+    const cpu_info_entry_t *b = (const cpu_info_entry_t *)right;
+    long ar = cpu_entry_rank(a);
+    long br = cpu_entry_rank(b);
+
+    if (ar != br) {
+        return ar < br ? 1 : -1;
+    }
+    return a->id - b->id;
+}
+
 int cpu_info_affinity_plan(const cpu_info_t *info, int *out, int max_count) {
     if (out == NULL || max_count <= 0) {
         return 0;
@@ -316,7 +341,53 @@ int cpu_info_affinity_plan(const cpu_info_t *info, int *out, int max_count) {
         return append_sysconf_order(out, max_count);
     }
 
-    return append_entry_order(info, out, max_count);
+    cpu_info_entry_t ordered[CPU_INFO_MAX_CPUS];
+    int count = info->entry_count;
+    if (count > CPU_INFO_MAX_CPUS) {
+        count = CPU_INFO_MAX_CPUS;
+    }
+    memcpy(ordered, info->entries, (size_t)count * sizeof(ordered[0]));
+    qsort(ordered, (size_t)count, sizeof(ordered[0]), compare_cpu_entries_by_speed);
+
+    cpu_info_t sorted = *info;
+    memcpy(sorted.entries, ordered, (size_t)count * sizeof(sorted.entries[0]));
+    sorted.entry_count = count;
+    return append_entry_order(&sorted, out, max_count);
+}
+
+int cpu_info_affinity_supported(void) {
+#if defined(_WIN32) || defined(__linux__)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+int cpu_info_bind_current_thread(int cpu_id) {
+    if (cpu_id < 0) {
+        return -1;
+    }
+#if defined(_WIN32)
+    int bits = (int)(sizeof(DWORD_PTR) * CHAR_BIT);
+    if (cpu_id >= bits) {
+        return -1;
+    }
+    DWORD_PTR mask = ((DWORD_PTR)1) << cpu_id;
+    return SetThreadAffinityMask(GetCurrentThread(), mask) == 0 ? -1 : 0;
+#elif defined(__linux__)
+#if defined(CPU_SETSIZE)
+    if (cpu_id >= CPU_SETSIZE) {
+        return -1;
+    }
+#endif
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(cpu_id, &set);
+    return sched_setaffinity(0, sizeof(set), &set);
+#else
+    (void)cpu_id;
+    return -1;
+#endif
 }
 
 void cpu_info_print(const cpu_info_t *info) {

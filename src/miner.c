@@ -3,6 +3,7 @@
 #include "miner.h"
 
 #include "console.h"
+#include "cpu_info.h"
 #include "sha256d.h"
 
 #if defined(BTC_MINER_OPENCL)
@@ -65,6 +66,9 @@ struct miner {
     uint64_t cuda_hashes;
 #endif
     int thread_count;
+    int cpu_affinity_enabled;
+    int cpu_affinity_count;
+    int cpu_affinity_plan[CPU_INFO_MAX_CPUS];
     int started;
     int opencl_started;
     int cuda_started;
@@ -89,6 +93,7 @@ struct miner {
 typedef struct {
     miner_t *miner;
     int id;
+    int target_cpu;
 } worker_arg_t;
 
 #if defined(BTC_MINER_OPENCL)
@@ -516,9 +521,17 @@ static void *worker_main(void *opaque) {
     worker_arg_t *arg = (worker_arg_t *)opaque;
     miner_t *miner = arg->miner;
     int id = arg->id;
+    int target_cpu = arg->target_cpu;
     sha256d_nonce_range_func_t scan_nonce_range = sha256d_nonce_range_func();
 
     free(arg);
+    if (target_cpu >= 0 && cpu_info_bind_current_thread(target_cpu) != 0) {
+        fprintf(stderr, "%s[MINER]%s worker=%d failed to bind cpu%d\n",
+                C_YELLOW,
+                C_RESET,
+                id,
+                target_cpu);
+    }
 
     for (;;) {
         pthread_mutex_lock(&miner->lock);
@@ -841,6 +854,13 @@ miner_t *miner_create_with_backend_options(int thread_count,
     return miner;
 }
 
+void miner_set_cpu_affinity(miner_t *miner, int enabled) {
+    if (miner == NULL || miner->started) {
+        return;
+    }
+    miner->cpu_affinity_enabled = enabled ? 1 : 0;
+}
+
 void miner_destroy(miner_t *miner) {
     if (miner == NULL) {
         return;
@@ -870,6 +890,20 @@ int miner_start(miner_t *miner) {
     int requested_cpu_threads = miner->thread_count;
     int opencl_running = 0;
     int cuda_running = 0;
+
+    if (miner->cpu_affinity_enabled && requested_cpu_threads > 0 && cpu_info_affinity_supported()) {
+        cpu_info_t info;
+        cpu_info_detect(&info);
+        miner->cpu_affinity_count = cpu_info_affinity_plan(&info,
+                                                           miner->cpu_affinity_plan,
+                                                           CPU_INFO_MAX_CPUS);
+        if (miner->cpu_affinity_count <= 0) {
+            miner->cpu_affinity_enabled = 0;
+        }
+    } else {
+        miner->cpu_affinity_enabled = 0;
+        miner->cpu_affinity_count = 0;
+    }
 
 #if defined(BTC_MINER_OPENCL)
     if (miner->opencl_config.enabled) {
@@ -1025,6 +1059,8 @@ int miner_start(miner_t *miner) {
         }
         arg->miner = miner;
         arg->id = i;
+        arg->target_cpu = miner->cpu_affinity_enabled && miner->cpu_affinity_count > 0 ?
+            miner->cpu_affinity_plan[i % miner->cpu_affinity_count] : -1;
         miner->thread_count = i + 1;
         if (pthread_create(&miner->threads[i], NULL, worker_main, arg) != 0) {
             free(arg);
@@ -1094,7 +1130,7 @@ int miner_start(miner_t *miner) {
 #endif
 
     miner->started = 1;
-    printf("%s[MINER]%s started cpu-threads=%s%d%s opencl-devices=%s%d%s cuda-devices=%s%d%s cpu-batch=%u affinity=%soff%s\n",
+    printf("%s[MINER]%s started cpu-threads=%s%d%s opencl-devices=%s%d%s cuda-devices=%s%d%s cpu-batch=%u affinity=%s%s%s",
            C_MAGENTA,
            C_RESET,
            C_BRIGHT_GREEN,
@@ -1107,8 +1143,16 @@ int miner_start(miner_t *miner) {
            cuda_running,
            C_RESET,
            miner_cpu_batch_size(miner),
-           C_GRAY,
+           miner->cpu_affinity_enabled ? C_BRIGHT_GREEN : C_GRAY,
+           miner->cpu_affinity_enabled ? "on" : "off",
            C_RESET);
+    if (miner->cpu_affinity_enabled && miner->cpu_affinity_count > 0) {
+        printf(" cpu-order=");
+        for (int i = 0; i < miner->cpu_affinity_count; ++i) {
+            printf("%s%d", i == 0 ? "" : ",", miner->cpu_affinity_plan[i]);
+        }
+    }
+    printf("\n");
     return 0;
 }
 
